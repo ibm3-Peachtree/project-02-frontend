@@ -1,0 +1,153 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../features/auth/screens/splash_screen.dart';
+import '../../features/auth/screens/nickname_setup_screen.dart';
+import '../../features/home/screens/home_screen.dart';
+import '../../features/routine/screens/routine_list_screen.dart';
+import '../../features/routine/screens/routine_detail_screen.dart';
+import '../../features/routine/screens/routine_create_screen.dart';
+import '../../data/models/routine_model.dart';
+import '../../features/briefing/screens/briefing_screen.dart';
+import '../../features/community/screens/community_screen.dart';
+import '../../features/community/screens/post_detail_screen.dart';
+import '../../features/community/screens/post_create_screen.dart';
+import '../../features/mypage/screens/mypage_screen.dart';
+import '../../features/mypage/screens/account_manage_screen.dart';
+import '../../features/mypage/screens/report_screen.dart';
+import '../../features/mypage/screens/notification_settings_screen.dart';
+import '../../features/mypage/screens/address_manage_screen.dart';
+import '../../features/mypage/screens/my_community_activity_screen.dart';
+import '../../features/mypage/screens/account_deleted_screen.dart';
+import '../../features/auth/providers/auth_provider.dart';
+import '../../features/auth/providers/auth_state.dart';
+import '../constants/route_constants.dart';
+import '../widgets/main_scaffold.dart';
+
+final routerProvider = Provider<GoRouter>((ref) {
+  final authListenable = ValueNotifier<int>(0);
+
+  ref.listen(authProvider, (_, _) {
+    authListenable.value++;
+  });
+
+  return GoRouter(
+    initialLocation: RouteConstants.splash,
+    refreshListenable: authListenable,
+    redirect: (context, state) {
+      final auth = ref.read(authProvider);
+      final isOnSplash    = state.matchedLocation == RouteConstants.splash;
+      final isOnNickname  = state.matchedLocation == RouteConstants.nicknameSetup;
+      final isOnDeleted   = state.matchedLocation == RouteConstants.accountDeleted;
+
+      // 탈퇴 완료 화면은 인증 상태 무관하게 항상 허용
+      if (isOnDeleted) return null;
+
+      switch (auth.status) {
+        case AuthStatus.unknown:
+          return isOnSplash ? null : RouteConstants.splash;
+        case AuthStatus.unauthenticated:
+          return isOnSplash ? null : RouteConstants.splash;
+        case AuthStatus.needsNickname:
+          return isOnNickname ? null : RouteConstants.nicknameSetup;
+        case AuthStatus.authenticated:
+          if (isOnSplash || isOnNickname) return RouteConstants.home;
+          return null;
+      }
+    },
+    routes: [
+      GoRoute(
+        path: RouteConstants.splash,
+        builder: (context, state) => const SplashScreen(),
+      ),
+      GoRoute(
+        path: RouteConstants.nicknameSetup,
+        builder: (context, state) => const NicknameSetupScreen(),
+      ),
+      // 루틴/커뮤니티 생성·상세는 ShellRoute 바깥 — 바텀 네비 없이 전체 화면으로 열림
+      GoRoute(
+        path: RouteConstants.routineCreate,
+        builder: (context, state) {
+          final routine = state.extra is RoutineModel
+              ? state.extra as RoutineModel
+              : null;
+          return RoutineCreateScreen(editRoutine: routine);
+        },
+      ),
+      GoRoute(
+        path: RouteConstants.routineDetail,
+        builder: (context, state) {
+          final id = int.parse(state.pathParameters['id']!);
+          return RoutineDetailScreen(routineId: id);
+        },
+      ),
+      GoRoute(
+        path: RouteConstants.postCreate,
+        builder: (context, state) => const PostCreateScreen(),
+      ),
+      GoRoute(
+        path: RouteConstants.postEdit,
+        builder: (context, state) {
+          final id = int.parse(state.pathParameters['id']!);
+          return PostCreateScreen(editPostId: id);
+        },
+      ),
+      GoRoute(
+        path: RouteConstants.postDetail,
+        builder: (context, state) {
+          final id = int.parse(state.pathParameters['id']!);
+          return PostDetailScreen(postId: id);
+        },
+      ),
+      GoRoute(
+        path: RouteConstants.accountManage,
+        builder: (context, state) => const AccountManageScreen(),
+      ),
+      GoRoute(
+        path: RouteConstants.report,
+        builder: (context, state) => const ReportScreen(),
+      ),
+      GoRoute(
+        path: RouteConstants.notificationSettings,
+        builder: (context, state) => const NotificationSettingsScreen(),
+      ),
+      GoRoute(
+        path: RouteConstants.addressManage,
+        builder: (context, state) => const AddressManageScreen(),
+      ),
+      GoRoute(
+        path: RouteConstants.myCommunityActivity,
+        builder: (context, state) => const MyCommunityActivityScreen(),
+      ),
+      GoRoute(
+        path: RouteConstants.accountDeleted,
+        builder: (context, state) => const AccountDeletedScreen(),
+      ),
+      ShellRoute(
+        builder: (context, state, child) => MainScaffold(child: child),
+        routes: [
+          GoRoute(
+            path: RouteConstants.home,
+            builder: (context, state) => const HomeScreen(),
+          ),
+          GoRoute(
+            path: RouteConstants.routine,
+            builder: (context, state) => const RoutineListScreen(),
+          ),
+          GoRoute(
+            path: RouteConstants.briefing,
+            builder: (context, state) => const BriefingScreen(),
+          ),
+          GoRoute(
+            path: RouteConstants.community,
+            builder: (context, state) => const CommunityScreen(),
+          ),
+          GoRoute(
+            path: RouteConstants.mypage,
+            builder: (context, state) => const MypageScreen(),
+          ),
+        ],
+      ),
+    ],
+  );
+});

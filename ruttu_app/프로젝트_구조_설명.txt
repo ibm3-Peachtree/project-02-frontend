@@ -1,0 +1,333 @@
+================================================================
+RUTTU 프론트엔드 프로젝트 구조 설명
+최종 업데이트: 2026-05-24
+================================================================
+
+lib/
+├── main.dart
+├── core/
+│   ├── constants/
+│   ├── theme/
+│   ├── utils/
+│   └── widgets/
+├── data/
+│   ├── models/
+│   ├── repositories/
+│   └── services/
+└── features/
+    ├── auth/
+    ├── home/
+    ├── routine/
+    ├── briefing/
+    ├── community/
+    └── mypage/
+
+----------------------------------------------------------------
+main.dart
+----------------------------------------------------------------
+앱 진입점. 전역 상태 관리(Riverpod)와 라우터를 연결하고 앱을 실행함.
+
+================================================================
+core/ — 앱 전반에 공유되는 기반 코드
+================================================================
+
+파일                              역할
+--------------------------------  -------------------------------------------------
+constants/api_constants.dart      백엔드 API URL 전체 목록.
+                                  SpringBoot base URL, FastAPI base URL,
+                                  모든 엔드포인트 경로 상수 정의.
+                                  예: GET /auth/google, GET /feeds, POST /routines
+
+constants/route_constants.dart    앱 내 화면 이동 경로(URL) 상수.
+                                  /home, /routine/:id, /community/:id 등
+
+constants/app_constants.dart      앱 이름, 버전 등 공통 상수
+
+theme/app_colors.dart             전체 색상 팔레트.
+                                  Primary(Coral Orange #FF6B2E),
+                                  Secondary(Mint Teal #00BDAA),
+                                  텍스트/배경/에러 색상 등
+
+theme/app_theme.dart              Flutter ThemeData 설정.
+                                  AppBar, Card, Button 등 전체 스타일
+
+utils/router.dart                 화면 라우팅 설정.
+                                  로그인 여부에 따른 자동 리다이렉트 로직 포함
+
+widgets/main_scaffold.dart        하단 탭바(홈·루틴·브리핑·커뮤니티·마이페이지)를
+                                  포함한 공통 레이아웃
+
+widgets/kakao_postcode_page.dart  카카오 우편번호 서비스 WebView 래퍼.
+                                  주소 검색 결과(도로명/지번/좌표)를
+                                  JavaScript 채널로 Flutter에 전달.
+                                  주소 추가/수정 시트에서 공유 사용.
+
+================================================================
+data/ — 백엔드와 직접 맞닿는 계층
+================================================================
+
+----------------------------------------------------------------
+data/models/ — API 응답/요청 데이터 구조체
+----------------------------------------------------------------
+
+파일                    담긴 클래스                       대응 API
+----------------------  --------------------------------  -----------------------
+user_model.dart         UserModel                         GET /users/me 응답
+
+routine_model.dart      RoutineModel                      GET /routines
+                        CreateRoutineRequest              POST /routines
+
+route_model.dart        RouteModel                        GET /routes
+                        PathModel                         GET /routes/{id}/live-status
+                        LiveStatusModel
+                        IssueModel
+
+address_model.dart      AddressModel                      GET /addresses
+                                                          POST /addresses
+                        ※ lat, lng 필드는 nullable(double?).
+                           카카오 우편번호로 검색한 주소는
+                           좌표가 없을 수 있음.
+
+weather_model.dart      WeatherModel                      GET /briefing/weather (FastAPI)
+                        AirQualityModel
+                        WeatherAirQualityModel
+
+post_model.dart         PostSummaryModel                  GET /feeds
+                        PostDetailModel                   GET /posts/{id}
+                        CommentModel                      GET /posts/{id}/comments
+                        CreatePostRequest                 POST /posts
+
+※ 참고: 모든 Model 클래스에 fromJson() 팩토리가 있어서 API JSON 응답을 직접 파싱함.
+   필드명은 camelCase로 API 명세와 동일하게 맞춰져 있음.
+
+----------------------------------------------------------------
+data/repositories/ — API 호출 인터페이스 + Mock 구현체
+----------------------------------------------------------------
+
+각 파일에 abstract class XxxRepository(인터페이스)와
+MockXxxRepository(목 데이터) 두 가지가 함께 존재.
+
+현재는 Mock 구현체를 사용 중이며,
+API 연동 시 HttpXxxRepository 로 교체할 구조.
+
+파일                          인터페이스 메서드 요약
+----------------------------  ---------------------------------------------------
+auth_repository.dart          signInWithGoogle(idToken)
+                              updateNickname()
+                              isNicknameAvailable()
+                              getCachedUser()
+                              signOut()
+                              deleteAccount()
+
+home_repository.dart          getActiveRoutine()
+                              getMyRoute()
+                              getWeather()
+                              getIssues()
+                              getRecommendedRoute()
+
+routine_repository.dart       getRoutines()
+                              getRoutineDetail(id)
+                              createRoutine()
+                              updateRoutine()
+                              deleteRoutine()
+                              searchRoutes(params)
+                              getAddresses()
+                              addAddress()
+                              updateAddress()
+                              deleteAddress()
+
+briefing_repository.dart      getWeatherAirQuality()
+                              getTrafficIssues()
+                              getAiSummary(userId)
+
+community_repository.dart     getHotPost()
+                              getFeeds(sort, route)
+                              getPostDetail(id)
+                              getComments(id)
+                              createPost()
+                              deletePost()
+                              createComment()
+                              deleteComment()
+                              reportPost()
+                              reportComment()
+
+----------------------------------------------------------------
+data/services/
+----------------------------------------------------------------
+
+파일                    역할
+----------------------  -------------------------------------------------------
+token_storage.dart      기기 로컬 보안 저장소(flutter_secure_storage).
+                        accessToken, refreshToken, userId 저장·조회·삭제.
+
+================================================================
+features/ — 화면 단위 기능 모듈
+================================================================
+
+각 feature는 screens/(UI), providers/(상태 관리)로 구성됨.
+
+----------------------------------------------------------------
+features/auth/
+----------------------------------------------------------------
+
+파일                              역할
+--------------------------------  -------------------------------------------------
+providers/auth_state.dart         AuthStatus 열거형:
+                                  unknown / unauthenticated /
+                                  needsNickname / authenticated
+
+providers/auth_provider.dart      로그인 상태 전역 관리.
+                                  signInWithGoogle(), setNickname(),
+                                  signOut(), deleteAccount() 제공
+
+screens/splash_screen.dart        앱 시작 화면.
+                                  토큰 유무 확인 후 자동 이동.
+                                  Google 로그인 버튼 표시.
+
+screens/nickname_setup_screen.dart  첫 로그인 시 닉네임 설정. 중복 확인 포함.
+
+----------------------------------------------------------------
+features/home/
+----------------------------------------------------------------
+
+파일                              역할
+--------------------------------  -------------------------------------------------
+providers/home_state.dart         HomeStatus 열거형:
+                                  noRoutine / preActive / active.
+                                  날씨·루틴·경로 데이터 보관.
+
+providers/home_provider.dart      홈 데이터 로드, 경로 시작/종료 액션.
+
+screens/home_screen.dart          [루틴 없을 때 - 2-A]
+                                    날씨 칩, 빈 상태 + 루틴 추가 버튼.
+                                  [출발 전 - 2-B]
+                                    드래그 패널 + 루틴 스텝 + 시작 버튼.
+                                  [이동 중 - 2-C]
+                                    현재 단계 pill + 종료 버튼.
+
+----------------------------------------------------------------
+features/routine/
+----------------------------------------------------------------
+
+파일                              역할
+--------------------------------  -------------------------------------------------
+providers/routine_provider.dart   루틴 목록/상세/주소/경로 검색 상태 관리.
+
+screens/routine_list_screen.dart  루틴 목록.
+                                  필터 칩(전체/평일/주말), 삭제 확인 다이얼로그.
+
+screens/routine_detail_screen.dart  루틴 상세.
+                                    경로 타임라인, 통계(거리/요금/혼잡도),
+                                    출발 버튼.
+
+screens/routine_create_screen.dart  루틴 생성 및 수정 겸용 폼.
+                                    editRoutine(RoutineModel?) 파라미터로
+                                    수정 모드 진입. initState에서 기존
+                                    데이터를 입력 필드에 자동 채움.
+                                    Step1: 이름·요일·도착 시간
+                                    Step2: 출발지·도착지 검색
+                                    Step3: 경로 5가지 선택 +
+                                           경로 상세 바텀시트
+                                    저장 시 신규=createRoutine,
+                                    수정=updateRoutine 자동 분기.
+
+----------------------------------------------------------------
+features/briefing/
+----------------------------------------------------------------
+
+파일                              역할
+--------------------------------  -------------------------------------------------
+providers/briefing_provider.dart  날씨·교통 이슈·AI 요약 병렬 로드.
+
+screens/briefing_screen.dart      날씨 카드 (온도/강수/미세먼지)
+                                  준비물 카드 (옷차림 추천·우산·마스크)
+                                  교통 이슈 카드
+                                  AI 요약 카드
+
+----------------------------------------------------------------
+features/community/
+----------------------------------------------------------------
+
+파일                              역할
+--------------------------------  -------------------------------------------------
+providers/community_provider.dart FeedNotifier: 정렬·노선 필터 상태.
+                                  PostDetailNotifier: 댓글 CRUD 상태.
+
+screens/community_screen.dart     HOT 게시글 배너.
+                                  고정 필터 헤더 (정렬/노선).
+                                  게시글 카드 목록.
+
+screens/post_detail_screen.dart   게시글 상세.
+                                  라우트 칩, 본문, 댓글 목록(롱프레스→신고).
+                                  하단 댓글 입력 바.
+                                  3점 메뉴(수정/삭제/신고).
+
+screens/post_create_screen.dart   게시글 작성.
+                                  노선·정류장·이슈타입 선택 칩.
+                                  제목/본문 텍스트 필드.
+
+----------------------------------------------------------------
+features/mypage/
+----------------------------------------------------------------
+
+파일                              역할
+--------------------------------  -------------------------------------------------
+screens/mypage_screen.dart        프로필 헤더 (닉네임·이메일).
+                                  메뉴 리스트:
+                                    리포트 / 주소 관리 / 알림 설정 /
+                                    내 커뮤니티 활동 / 계정 관리.
+
+screens/account_manage_screen.dart  Google 연동 표시.
+                                    로그아웃 다이얼로그.
+                                    회원탈퇴 다이얼로그 (삭제 항목 경고 포함).
+
+screens/report_screen.dart        주간 탭: 요일별 막대 차트, 통계 4개, AI 인사이트.
+                                  월간 탭: 통계 6개, AI 인사이트.
+
+screens/notification_settings_screen.dart
+                                  [경로 안내 알림]
+                                  출발 권장 알림 (알림 시점 선택)
+                                  승하차 알림 (알림 방식·하차 정류장 전 설정)
+                                  TTS 안내 (안내 시점 선택)
+                                  [브리핑 알림]
+                                  브리핑 시점: 당일 아침 / 전날 저녁 / 둘 다
+                                  시점별 개별 시간 피커 (아침·저녁 별도)
+                                  알림 요일: 평일만 / 매일
+                                  브리핑 형식: 텍스트 / 음성
+                                  각 토글 ON 시 서브 설정 확장.
+
+screens/address_manage_screen.dart  주소 목록 (편집·삭제).
+                                    주소 추가/수정 바텀시트.
+                                    주소 검색은 kakao_postcode_page.dart
+                                    WebView를 통해 카카오 우편번호 서비스
+                                    직접 연동. (별도 API 키 불필요)
+
+screens/my_community_activity_screen.dart
+                                  내가 쓴 글 탭 / 내가 쓴 댓글 탭.
+                                  원본 게시글 링크 포함.
+
+================================================================
+백엔드 개발자에게 특히 전달할 점
+================================================================
+
+1. Repository 패턴 사용
+   현재 모든 API 호출부는 MockXxxRepository 로 대체되어 있음.
+   실제 서버 연동 시 HttpXxxRepository 를 같은 인터페이스로
+   구현해서 주입하면 됨. UI 코드 수정 불필요.
+
+2. 토큰 관리
+   accessToken / refreshToken 모두 기기 보안 저장소에 보관.
+   인터셉터로 자동 갱신 구조 예정 (현재 미구현).
+
+3. 두 서버 분리
+   SpringBoot  → api_constants.dart 의 springBaseUrl  → 대부분의 API
+   FastAPI     → api_constants.dart 의 fastapiBaseUrl  → 브리핑·AI 요약 전용
+
+4. API 명세 typo 대응
+   estimateDuration / estimatedDuration 혼용을 모델에서
+   null 합체 연산자(??)로 양쪽 파싱 처리해둠.
+
+5. userId 타입
+   userId 는 int (Long) 타입. String 아님.
+
+================================================================
