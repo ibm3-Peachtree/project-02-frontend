@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/constants/route_constants.dart';
 import '../../../data/models/routine_model.dart';
@@ -36,7 +37,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void _onStopTap(RoutineModel? routine) {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('경로를 종료할까요?',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
@@ -46,16 +47,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('계속 진행',
                 style: TextStyle(color: AppColors.textSecondary)),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // stopRoute() 먼저 → state가 preActive로 바뀜
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await Future.delayed(const Duration(milliseconds: 400));
+              if (!mounted) return;
               ref.read(homeProvider.notifier).stopRoute();
-              // HomeScreen은 살아있으므로 안전하게 모달 표시
+              await Future.delayed(const Duration(milliseconds: 400));
               if (mounted) _showFeedbackModal(context, routine);
             },
             child: const Text('종료하기'),
@@ -269,6 +271,7 @@ class _PreActiveView extends ConsumerStatefulWidget {
 class _PreActiveViewState extends ConsumerState<_PreActiveView>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  NaverMapController? _mapController;
 
   @override
   void initState() {
@@ -280,6 +283,23 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
         ref.read(briefingProvider.notifier).load();
       }
     });
+  }
+
+  Future<void> _moveToCurrentLocation(NaverMapController controller) async {
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) return;
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      await controller.updateCamera(
+        NCameraUpdate.scrollAndZoomTo(
+          target: NLatLng(pos.latitude, pos.longitude),
+          zoom: 15,
+        ),
+      );
+    } catch (_) {}
   }
 
   @override
@@ -313,6 +333,7 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
       body: Stack(
         children: [
          NaverMap(
+  key: const ValueKey('preactive_map'),
   options: const NaverMapViewOptions(
     initialCameraPosition: NCameraPosition(
       target: NLatLng(37.5665, 126.9780),
@@ -321,6 +342,10 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
     mapType: NMapType.basic,
     activeLayerGroups: [NLayerGroup.transit],
   ),
+  onMapReady: (controller) {
+    _mapController = controller;
+    _moveToCurrentLocation(controller);
+  },
 ),          SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -412,11 +437,29 @@ class _ActiveView extends ConsumerStatefulWidget {
 class _ActiveViewState extends ConsumerState<_ActiveView>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  NaverMapController? _mapController;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+  }
+
+  Future<void> _moveToCurrentLocation(NaverMapController controller) async {
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) return;
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      await controller.updateCamera(
+        NCameraUpdate.scrollAndZoomTo(
+          target: NLatLng(pos.latitude, pos.longitude),
+          zoom: 15,
+        ),
+      );
+    } catch (_) {}
   }
 
   @override
@@ -434,8 +477,21 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
       backgroundColor: AppColors.background,
       body: Stack(
         children: [
-          Container(color: const Color(0xFFE8EFF4)),
-          Center(child: Icon(Icons.map_outlined, size: 64, color: Colors.grey.shade400)),
+          NaverMap(
+            key: const ValueKey('active_map'),
+            options: const NaverMapViewOptions(
+              initialCameraPosition: NCameraPosition(
+                target: NLatLng(37.5665, 126.9780),
+                zoom: 14,
+              ),
+              mapType: NMapType.basic,
+              activeLayerGroups: [NLayerGroup.transit],
+            ),
+            onMapReady: (controller) {
+              _mapController = controller;
+              _moveToCurrentLocation(controller);
+            },
+          ),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
