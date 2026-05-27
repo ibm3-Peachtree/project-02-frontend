@@ -1,6 +1,13 @@
 import '../models/routine_model.dart';
 import '../models/route_model.dart';
 import '../models/weather_model.dart';
+import '../models/address_model.dart'; // ✅ 버그 수정: AddressModel/AddressRepository import 추가
+import 'address_repository.dart';      // ✅ AddressRepository import
+import 'package:dio/dio.dart';
+import 'package:ruttu_app/core/constants/api_constants.dart';
+
+// ✅ MockAddressRepository는 address_repository.dart 에만 존재하므로
+//    home_repository.dart 에서는 삭제 (중복 선언 제거)
 
 abstract class HomeRepository {
   Future<List<RoutineModel>> getRoutines();
@@ -9,9 +16,21 @@ abstract class HomeRepository {
   Future<RouteModel> getRecommendedRoute();
   Future<List<IssueModel>> getTodayIssues();
   Future<WeatherAirQualityModel> getWeatherAirQuality();
+
+  Future<void> sendLiveLocation({
+    required double latitude,
+    required double longitude,
+    required double speed,
+    required double accuracy,
+  });
 }
 
+/// Mock 데이터로 UI를 구성하되, sendLiveLocation만 실제 API를 호출합니다.
+/// 각 API가 완성되면 해당 메서드만 ApiHomeRepository로 이전하세요.
 class MockHomeRepository implements HomeRepository {
+  MockHomeRepository(this._dio);
+  final Dio _dio;
+
   @override
   Future<List<RoutineModel>> getRoutines() async {
     await Future.delayed(const Duration(milliseconds: 400));
@@ -39,93 +58,33 @@ class MockHomeRepository implements HomeRepository {
   @override
   Future<RouteModel> getMyRoute() async {
     await Future.delayed(const Duration(milliseconds: 500));
-    // 수원 → 여의도 (버스 + 2호선 + 9호선, 환승 2회, 총 83분)
     return RouteModel(
-      pathType: 3,
+      recoId: 1,
       totalDistance: 41200,
-      trafficDistance: 38870,
-      totalWalk: 1330,
       totalTime: 83,
       payment: 2500,
+      startName: '수원시 팔달구 자택',
+      endName: '여의도 회사',
       path: [
-        // 구간 1: 도보 — 자택 → 버스 정류장
-        const PathModel(
-          trafficType: 3,
-          distance: 350,
-          sectionTime: 5,
-          startName: '수원시 팔달구 자택',
-          endName: '수원역 버스 정류장',
-        ),
-        // 구간 2: 버스 7770 — 수원역 → 사당역 (환승 전)
+        const PathModel(type: 'walk', sectionTime: 5, start: '수원시 팔달구 자택', end: '수원역 버스 정류장'),
         PathModel(
-          trafficType: 2,
-          distance: 24800,
-          sectionTime: 35,
-          busNo: 7770,
-          stationCount: 12,
-          startName: '수원역 버스터미널',
-          endName: '사당역 버스 정류장',
-          passStopList: const [
-            '수원역', '매탄동', '화서역', '안양역', '명학역',
-            '금정역', '산본역', '수리산역', '안양1번가', '이수역',
-            '총신대입구역', '사당역',
-          ],
+          type: 'bus', sectionTime: 35, no: const ['7770'], stationCount: 12,
+          start: '수원역 버스터미널', end: '사당역 버스 정류장',
+          stationName: const ['수원역','매탄동','화서역','안양역','명학역','금정역','산본역','수리산역','안양1번가','이수역','총신대입구역','사당역'],
         ),
-        // 구간 3: 도보 — 사당역 버스 → 사당역 지하철 (환승 1)
-        const PathModel(
-          trafficType: 3,
-          distance: 280,
-          sectionTime: 4,
-          startName: '사당역 버스 정류장',
-          endName: '사당역 2호선 승강장',
-        ),
-        // 구간 4: 지하철 2호선 — 사당역 → 당산역
+        const PathModel(type: 'walk', sectionTime: 4, start: '사당역 버스 정류장', end: '사당역 2호선 승강장'),
         PathModel(
-          trafficType: 1,
-          distance: 13200,
-          sectionTime: 18,
-          subwayCode: 2,
-          stationCount: 6,
-          startName: '사당역',
-          endName: '당산역',
-          way: '성수 방향',
-          wayCode: 1,
-          door: '왼쪽',
-          passStopList: const [
-            '사당역', '방배역', '서초역', '교대역',
-            '강남역', '역삼역', '선릉역', '당산역',
-          ],
+          type: 'subway', sectionTime: 18, no: const ['2'], stationCount: 6,
+          start: '사당역', end: '당산역', way: '성수 방향',
+          stationName: const ['사당역','방배역','서초역','교대역','강남역','역삼역','선릉역','당산역'],
         ),
-        // 구간 5: 도보 — 당산역 2호선 → 당산역 9호선 (환승 2)
-        const PathModel(
-          trafficType: 3,
-          distance: 200,
-          sectionTime: 3,
-          startName: '당산역 2호선 승강장',
-          endName: '당산역 9호선 승강장',
-        ),
-        // 구간 6: 지하철 9호선 — 당산역 → 여의도역
+        const PathModel(type: 'walk', sectionTime: 3, start: '당산역 2호선 승강장', end: '당산역 9호선 승강장'),
         PathModel(
-          trafficType: 1,
-          distance: 4200,
-          sectionTime: 8,
-          subwayCode: 9,
-          stationCount: 2,
-          startName: '당산역',
-          endName: '여의도역',
-          way: '김포공항 방향',
-          wayCode: 2,
-          door: '오른쪽',
-          passStopList: const ['당산역', '국회의사당역', '여의도역'],
+          type: 'subway', sectionTime: 8, no: const ['9'], stationCount: 2,
+          start: '당산역', end: '여의도역', way: '김포공항 방향',
+          stationName: const ['당산역','국회의사당역','여의도역'],
         ),
-        // 구간 7: 도보 — 여의도역 → 회사
-        const PathModel(
-          trafficType: 3,
-          distance: 700,
-          sectionTime: 10,
-          startName: '여의도역',
-          endName: '여의도 회사',
-        ),
+        const PathModel(type: 'walk', sectionTime: 10, start: '여의도역', end: '여의도 회사'),
       ],
     );
   }
@@ -133,74 +92,33 @@ class MockHomeRepository implements HomeRepository {
   @override
   Future<RouteModel> getRecommendedRoute() async {
     await Future.delayed(const Duration(milliseconds: 500));
-    // 대안 경로: 수원역 → 1호선(급행) → 서울역 → 9호선 → 여의도 (환승 1회, 70분)
     return RouteModel(
-      pathType: 3,
+      recoId: 2,
       totalDistance: 38500,
-      trafficDistance: 37050,
-      totalWalk: 1450,
       totalTime: 70,
       payment: 2800,
+      startName: '수원시 팔달구 자택',
+      endName: '여의도 회사',
       path: [
-        const PathModel(
-          trafficType: 3,
-          distance: 350,
-          sectionTime: 5,
-          startName: '수원시 팔달구 자택',
-          endName: '수원역 지하철 1호선',
-        ),
+        const PathModel(type: 'walk', sectionTime: 5, start: '수원시 팔달구 자택', end: '수원역 지하철 1호선'),
         PathModel(
-          trafficType: 1,
-          distance: 29500,
-          sectionTime: 42,
-          subwayCode: 1,
-          stationCount: 11,
-          startName: '수원역',
-          endName: '노량진역',
-          way: '서울역 방향',
-          wayCode: 1,
-          door: '오른쪽',
-          passStopList: const [
-            '수원역', '세류역', '병점역', '서동탄역', '오산역',
-            '오산대역', '진위역', '송탄역', '서정리역', '평택역',
-            '지제역', '천안역',
-          ],
+          type: 'subway', sectionTime: 42, no: const ['1'], stationCount: 11,
+          start: '수원역', end: '노량진역', way: '서울역 방향',
+          stationName: const ['수원역','세류역','병점역','서동탄역','오산역','오산대역','진위역','송탄역','서정리역','평택역','지제역','천안역'],
         ),
-        const PathModel(
-          trafficType: 3,
-          distance: 400,
-          sectionTime: 6,
-          startName: '노량진역 1호선',
-          endName: '노량진역 9호선 승강장',
-        ),
+        const PathModel(type: 'walk', sectionTime: 6, start: '노량진역 1호선', end: '노량진역 9호선 승강장'),
         PathModel(
-          trafficType: 1,
-          distance: 3900,
-          sectionTime: 10,
-          subwayCode: 9,
-          stationCount: 3,
-          startName: '노량진역',
-          endName: '여의도역',
-          way: '김포공항 방향',
-          wayCode: 2,
-          door: '오른쪽',
-          passStopList: const ['노량진역', '샛강역', '여의도역'],
+          type: 'subway', sectionTime: 10, no: const ['9'], stationCount: 3,
+          start: '노량진역', end: '여의도역', way: '김포공항 방향',
+          stationName: const ['노량진역','샛강역','여의도역'],
         ),
-        const PathModel(
-          trafficType: 3,
-          distance: 700,
-          sectionTime: 7,
-          startName: '여의도역',
-          endName: '여의도 회사',
-        ),
+        const PathModel(type: 'walk', sectionTime: 7, start: '여의도역', end: '여의도 회사'),
       ],
     );
   }
 
   @override
-  Future<List<IssueModel>> getTodayIssues() async {
-    return [];
-  }
+  Future<List<IssueModel>> getTodayIssues() async => [];
 
   @override
   Future<WeatherAirQualityModel> getWeatherAirQuality() async {
@@ -209,8 +127,8 @@ class MockHomeRepository implements HomeRepository {
       weather: [
         WeatherModel(
           dateTime: DateTime.now().toIso8601String(),
-          tmp: 23, wsd: '2.5', sky: '1',
-          pty: '0', pop: 10, pcp: '없음', reh: 45, sno: '없음',
+          tmp: 23, wsd: '2.5', sky: '1', pty: '0',
+          pop: 10, pcp: '없음', reh: 45, sno: '없음',
         ),
       ],
       airQuality: AirQualityModel(
@@ -219,4 +137,52 @@ class MockHomeRepository implements HomeRepository {
       ),
     );
   }
+
+  @override
+  Future<void> sendLiveLocation({
+    required double latitude,
+    required double longitude,
+    required double speed,
+    required double accuracy,
+  }) async {
+    try {
+      await _dio.patch(
+        ApiConstants.liveLocation,
+        data: {
+          'latitude': latitude,
+          'longitude': longitude,
+          'speed': speed,
+          'accuracy': accuracy,
+        },
+      );
+      print('[LiveLocation] 전송 성공: lat=$latitude, lng=$longitude');
+    } catch (e) {
+      print('[LiveLocation] 전송 실패 (무시됨): $e');
+    }
+  }
+}
+
+class ApiHomeRepository implements HomeRepository {
+  ApiHomeRepository(this._dio);
+  final Dio _dio;
+
+  @override
+  Future<void> sendLiveLocation({
+    required double latitude,
+    required double longitude,
+    required double speed,
+    required double accuracy,
+  }) async {
+    await _dio.patch(
+      ApiConstants.liveLocation,
+      data: {'latitude': latitude, 'longitude': longitude, 'speed': speed, 'accuracy': accuracy},
+    );
+  }
+
+  @override Future<List<RoutineModel>> getRoutines() => throw UnimplementedError();
+  @override Future<LiveStatusModel> getLiveStatus() => throw UnimplementedError();
+  @override Future<RouteModel> getMyRoute() => throw UnimplementedError();
+  @override Future<RouteModel> getRecommendedRoute() => throw UnimplementedError();
+  @override Future<List<IssueModel>> getTodayIssues() => throw UnimplementedError();
+  @override Future<WeatherAirQualityModel> getWeatherAirQuality() => throw UnimplementedError();
 }

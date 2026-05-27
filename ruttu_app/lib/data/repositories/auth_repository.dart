@@ -1,43 +1,110 @@
+import 'package:dio/dio.dart';
 import '../models/user_model.dart';
+import '../../core/constants/api_constants.dart';
 
-// POST /auth/google 응답 구조
+
 class LoginResponse {
   final String accessToken;
   final String refreshToken;
   final int userId;
+  final String email;
+  final String nickname;
 
   const LoginResponse({
     required this.accessToken,
     required this.refreshToken,
     required this.userId,
+    required this.email,
+    required this.nickname,
   });
 
   factory LoginResponse.fromJson(Map<String, dynamic> json) => LoginResponse(
         accessToken: json['accessToken'] as String,
         refreshToken: json['refreshToken'] as String,
         userId: json['userId'] as int,
+        email: json['email'] as String,
+        nickname: json['nickname'] as String,
       );
 }
 
 abstract class AuthRepository {
-  /// Google idToken을 받아 서버 로그인 → LoginResponse 반환
   Future<LoginResponse> signInWithGoogle(String idToken);
-
-  /// PUT /users/mypage/nickname
   Future<void> updateNickname(String nickname);
-
-  /// PUT /users/mypage/nickname 전 중복 확인 (서버 409 에러로 처리)
-  /// Mock에서만 별도 구현, 실제 서버는 updateNickname 시 409 반환
   Future<bool> isNicknameAvailable(String nickname);
-
-  /// 로컬에 캐시된 유저 정보 반환 (토큰 기반 복원용)
   Future<UserModel?> getCachedUser();
-
-  /// POST /auth/logout
   Future<void> signOut(String refreshToken);
-
-  /// DELETE /users/me
   Future<void> deleteAccount();
+  Future<LoginResponse> refreshToken(String refreshToken); // 추가
+}
+
+class ApiAuthRepository implements AuthRepository {
+  final Dio _dio;
+  UserModel? _cachedUser;
+
+  ApiAuthRepository(this._dio);
+
+  @override
+  Future<LoginResponse> signInWithGoogle(String idToken) async {
+    print("🔥 API 호출 시작");
+    final res = await _dio.post(
+      ApiConstants.googleLogin, // '/auth/google'
+      data: {'idToken': idToken},
+    );
+    print("🔥 API 응답 옴");
+    final loginRes = LoginResponse.fromJson(res.data);
+    // 로그인 성공 시 유저 캐싱
+    _cachedUser = UserModel(
+      userId: loginRes.userId,
+      email: loginRes.email,   // 서버 응답에 있으면 res.data['email']로 교체
+      nickname: null,
+    );
+    return loginRes;
+  }
+
+  @override
+  Future<void> updateNickname(String nickname) async {
+    await _dio.put(
+      ApiConstants.updateNickname, // '/users/mypage/nickname'
+      data: {'nickname': nickname},
+    );
+    if (_cachedUser != null) {
+      _cachedUser = _cachedUser!.copyWith(nickname: nickname);
+    }
+  }
+
+  @override
+  Future<bool> isNicknameAvailable(String nickname) async {
+    // 서버는 PUT 시 409로 중복 처리 → 여기선 항상 true 반환
+    // 실제 중복은 updateNickname()의 DioException catch에서 처리
+    return true;
+  }
+
+  @override
+  Future<UserModel?> getCachedUser() async => _cachedUser;
+
+  @override
+  Future<void> signOut(String refreshToken) async {
+    await _dio.post(
+      ApiConstants.logout, // '/auth/logout'
+      data: {'refreshToken': refreshToken},
+    );
+    _cachedUser = null;
+  }
+
+  @override
+  Future<void> deleteAccount() async {
+    await _dio.delete(ApiConstants.deleteAccount); // '/users/me'
+    _cachedUser = null;
+  }
+
+  @override
+  Future<LoginResponse> refreshToken(String refreshToken) async {
+    final res = await _dio.post(
+      '/auth/refresh',
+      data: {'refreshToken': refreshToken},
+    );
+    return LoginResponse.fromJson(res.data);
+  }
 }
 
 class MockAuthRepository implements AuthRepository {
@@ -53,11 +120,15 @@ class MockAuthRepository implements AuthRepository {
       email: 'test@example.com',
       nickname: null, // 최초 로그인 시 닉네임 없음
     );
+
     return const LoginResponse(
       accessToken: 'mock-access-token',
       refreshToken: 'mock-refresh-token',
       userId: 1001,
+      email: 'test@example.com',
+      nickname: 'tester'
     );
+
   }
 
   @override
@@ -85,5 +156,9 @@ class MockAuthRepository implements AuthRepository {
   @override
   Future<void> deleteAccount() async {
     _cachedUser = null;
+  }
+    @override
+  Future<LoginResponse> refreshToken(String refreshToken) {
+    throw UnimplementedError();
   }
 }

@@ -203,10 +203,25 @@ class _RoutineCard extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      '${routine.departureAddressName} → ${routine.arrivalAddressName}',
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w700),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // 루틴 이름 (예: 출근)
+                        Text(
+                          routine.routineName,
+                          style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primary),
+                        ),
+                        const SizedBox(height: 2),
+                        // 출발지 → 도착지
+                        Text(
+                          '${routine.departureAddressName} → ${routine.arrivalAddressName}',
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w700),
+                        ),
+                      ],
                     ),
                   ),
                   IconButton(

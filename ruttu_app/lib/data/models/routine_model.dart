@@ -23,17 +23,35 @@ class RoutineModel {
   });
 
   factory RoutineModel.fromJson(Map<String, dynamic> json) => RoutineModel(
-        routineId: json['routineId'] as int,
+        routineId: (json['routineId'] as num).toInt(),
         routineName: json['routineName'] as String,
-        departureAddressName: json['departureAddressName'] as String,
-        arrivalAddressName: json['arrivalAddressName'] as String,
-        targetArrivalTime: json['targetArrivalTime'] as String,
-        recommendedDepartureTime: json['recommendedDepartureTime'] as String,
-        // 명세 오타 혼용 — 둘 다 허용
-        estimatedDuration: (json['estimatedDuration'] ?? json['estimateDuration'] ?? 0) as int,
-        days: (json['days'] as List<dynamic>).cast<String>(),
+        departureAddressName: json['originAlias'] as String? ??
+            json['departureAddressName'] as String,
+        arrivalAddressName: json['destinationAlias'] as String? ??
+            json['arrivalAddressName'] as String,
+        targetArrivalTime: _formatTime(json['targetArrivalTime']),
+        recommendedDepartureTime: _formatTime(json['recommendedDepartureTime']),
+        estimatedDuration:
+            (json['estimatedDuration'] ?? json['estimateDuration'] ?? 0) as int,
+        days: json['dow'] != null
+            ? _dowToDays((json['dow'] as List<dynamic>))
+            : (json['days'] as List<dynamic>).cast<String>(),
         isActive: json['isActive'] as bool? ?? true,
       );
+
+  static String _formatTime(dynamic value) {
+    final raw = value.toString();
+    return raw.length >= 5 ? raw.substring(0, 5) : raw;
+  }
+
+  static List<String> _dowToDays(List<dynamic> dow) {
+    const keys = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+    final days = <String>[];
+    for (var i = 0; i < dow.length && i < keys.length; i++) {
+      if (dow[i] == true) days.add(keys[i]);
+    }
+    return days;
+  }
 
   Map<String, dynamic> toJson() => {
         'routineId': routineId,

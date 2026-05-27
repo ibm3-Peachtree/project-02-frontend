@@ -559,17 +559,17 @@ class _MeetingRouteCard extends StatelessWidget {
   final RouteModel route;
   const _MeetingRouteCard({required this.route});
 
-  Color _lineColor(int? subwayCode) {
+  Color _lineColor(String? subwayCode) {
     return switch (subwayCode) {
-      1 => Colors.blue,
-      2 => Colors.green,
-      3 => Colors.orange,
-      4 => Colors.lightBlue,
-      5 => Colors.purple,
-      6 => Colors.brown,
-      7 => Colors.green.shade800,
-      8 => Colors.pink,
-      9 => Colors.yellow.shade800,
+      '1' => Colors.blue,
+      '2' => Colors.green,
+      '3' => Colors.orange,
+      '4' => Colors.lightBlue,
+      '5' => Colors.purple,
+      '6' => Colors.brown,
+      '7' => Colors.green.shade800,
+      '8' => Colors.pink,
+      '9' => Colors.yellow.shade800,
       _ => AppColors.primary,
     };
   }
@@ -644,11 +644,11 @@ class _MeetingRouteCard extends StatelessWidget {
                       );
                     }
                     final color = p.isSubway
-                        ? _lineColor(p.subwayCode)
+                        ? _lineColor(p.no.isNotEmpty ? p.no.first : null)
                         : Colors.blue;
                     final label = p.isSubway
-                        ? '${p.subwayCode}호선'
-                        : '버스 ${p.busNo}';
+                        ? '${p.no.isNotEmpty ? p.no.first : ''}호선'
+                        : '버스 ${p.no.isNotEmpty ? p.no.first : ''}';
                     return Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
@@ -681,7 +681,7 @@ class _MeetingRouteCard extends StatelessWidget {
                   Row(
                     children: [
                       Text(
-                        route.path.first.startName ?? '출발',
+                        route.startName ?? route.path.first.start ?? '출발',
                         style: const TextStyle(
                             fontSize: 13,
                             color: AppColors.textSecondary),
@@ -693,7 +693,7 @@ class _MeetingRouteCard extends StatelessWidget {
                             color: AppColors.textSecondary),
                       ),
                       Text(
-                        route.path.last.endName ?? '도착',
+                        route.endName ?? route.path.last.end ?? '도착',
                         style: const TextStyle(
                             fontSize: 13,
                             color: AppColors.textSecondary),

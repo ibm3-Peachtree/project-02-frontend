@@ -4,11 +4,18 @@ import '../../../data/models/routine_model.dart';
 import '../../../data/models/route_model.dart';
 import '../../../data/models/weather_model.dart';
 import '../../../data/repositories/home_repository.dart';
+import '../../auth/providers/network_provider.dart';
 import 'home_state.dart';
 
-final homeRepositoryProvider = Provider<HomeRepository>(
-  (_) => MockHomeRepository(),
-);
+final homeRepositoryProvider = Provider<HomeRepository>((ref) {
+  // ✅ Mock 데이터로 화면을 구성하되, sendLiveLocation만 실제 API 호출
+  // 각 API가 완성되면 MockHomeRepository → ApiHomeRepository로 점진 전환
+  return MockHomeRepository(ref.read(apiClientProvider).dio);
+});
+
+// ✅ 버그2 수정: addressRepositoryProvider는 address_provider.dart 에만 두고
+//              home_provider.dart 에 있던 중복 선언 및
+//              `Future<List<AddressModel>> getAddresses();` 부유 선언을 모두 제거했습니다.
 
 final homeProvider = StateNotifierProvider<HomeNotifier, HomeState>(
   (ref) => HomeNotifier(ref.read(homeRepositoryProvider)),
@@ -130,6 +137,23 @@ class HomeNotifier extends StateNotifier<HomeState> {
     }
     if (path.isBus) return '버스 탑승 중';
     return '지하철 탑승 중';
+  }
+
+  /// GPS가 목적지 반경 내에 진입했을 때 호출됩니다.
+  Future<void> arriveByGps() async {
+    if (state.status != HomeStatus.active) return;
+    _liveTimer?.cancel();
+    _liveTimer = null;
+    _simulatedMinutes = 0;
+    state = HomeState(
+      status: HomeStatus.preActive,
+      activeRoutine: state.activeRoutine,
+      weather: state.weather,
+      liveStatus: LiveStatusModel(
+        status: '도착',
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
   }
 
   Future<void> stopRoute() async {

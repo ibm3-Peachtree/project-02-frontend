@@ -193,13 +193,13 @@ class _RouteDetailCard extends StatelessWidget {
 
   // Mock 경로 단계 — 실제 서버 연동 시 GET /routines/{id} 응답의 route 필드로 교체
   static const _mockPaths = [
-    PathModel(trafficType: 3, distance: 650, sectionTime: 8,
-        startName: '집', endName: '강남역'),
-    PathModel(trafficType: 1, distance: 3200, sectionTime: 12,
-        stationCount: 3, subwayCode: 2,
-        startName: '강남역', endName: '을지로입구역', way: '성수 방향'),
-    PathModel(trafficType: 3, distance: 400, sectionTime: 5,
-        startName: '을지로입구역', endName: '회사'),
+    PathModel(type: 'walk', sectionTime: 8,
+        start: '집', end: '강남역'),
+    PathModel(type: 'subway', sectionTime: 12,
+        no: ['2'], stationCount: 3,
+        start: '강남역', end: '을지로입구역', way: '성수 방향'),
+    PathModel(type: 'walk', sectionTime: 5,
+        start: '을지로입구역', end: '회사'),
   ];
 
   @override
@@ -273,7 +273,7 @@ class _PathStepItem extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${path.startName ?? ''} → ${path.endName ?? ''}',
+                  '${path.start ?? ''} → ${path.end ?? ''}',
                   style: const TextStyle(
                       fontSize: 14, fontWeight: FontWeight.w600),
                 ),

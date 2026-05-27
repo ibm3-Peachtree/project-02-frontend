@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -108,24 +109,140 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
     }
   }
 
+  Future<void> _showRouteDetail(RouteModel summary) async {
+    RouteModel detail = summary;
+    try {
+      detail = await ref
+          .read(routineRepositoryProvider)
+          .getRouteDetail(summary.recoId);
+    } catch (_) {}
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.75,
+        maxChildSize: 0.95,
+        builder: (_, controller) => _RouteDetailSheet(
+          route: detail,
+          scrollController: controller,
+        ),
+      ),
+    );
+  }
+
+  // GPS sendLiveLocation 관련:
+  // 이 파일이 아닌 위치추적 서비스(예: LocationService/LiveTrackingNotifier)에서
+  // Geolocator.getPositionStream()으로 position을 받은 뒤, 아래처럼 호출해야 해요:
+  //
+  //   await repository.sendLiveLocation(
+  //     latitude: position.latitude,
+  //     longitude: position.longitude,
+  //     speed: position.speed < 0 ? 0.0 : position.speed,  // 음수(-1.0) 방어 처리
+  //     accuracy: position.accuracy,
+  //   );
+  //
+  // DI에서 MockHomeRepository가 아닌 ApiHomeRepository가 주입됐는지도 확인하세요.
   Future<void> _save() async {
     if (_selectedRouteIndex == null) return;
+    final selectedRoute = _routes[_selectedRouteIndex!];
+    final routineName = _nameController.text.trim();
     final request = CreateRoutineRequest(
-      routineName: _nameController.text.trim(),
+      routineName: routineName,
       targetArrivalTime: _arrivalTimeStr,
-      departureAddressId: _departure!.addressId,
-      arrivalAddressId: _arrival!.addressId,
-      routeId: _selectedRouteIndex! + 1,
+      originAlias: _departure!.name,
+      origin: _departure!.address,
+      destinationAlias: _arrival!.name,
+      destination: _arrival!.address,
+      recoId: selectedRoute.recoId ?? _selectedRouteIndex!,
       days: _selectedDays.toList(),
     );
-    if (widget.editRoutine != null) {
-      await ref
-          .read(routineListProvider.notifier)
-          .updateRoutine(widget.editRoutine!.routineId, request);
-    } else {
-      await ref.read(routineListProvider.notifier).createRoutine(request);
+    try {
+      if (widget.editRoutine != null) {
+        await ref
+            .read(routineListProvider.notifier)
+            .updateRoutine(widget.editRoutine!.routineId, request);
+      } else {
+        await ref.read(routineListProvider.notifier).createRoutine(request);
+      }
+      if (mounted) context.pop();
+    } on DioException catch (e) {
+      if (!mounted) return;
+      // 서버 응답이 JSON Map일 수도, plain String일 수도 있어서 안전하게 처리
+      final data = e.response?.data;
+      final serverMessage = switch (data) {
+        Map()    => (data['message'] ?? data['error'] ?? '').toString(),
+        String() => data,
+        _        => '',
+      };
+      final isDuplicateTime = e.response?.statusCode == 409 &&
+          (serverMessage.contains('동일 시간대') ||
+           serverMessage.contains('DuplicateRoutineTargetArrivalTime'));
+
+      final isDuplicateName = e.response?.statusCode == 409 &&
+          (serverMessage.contains('동일 이름') ||
+           serverMessage.contains('DuplicateRoutineName'));
+
+      if (isDuplicateTime) {
+        final days = _selectedDays.map((d) {
+          const map = {
+            'MON': '월', 'TUE': '화', 'WED': '수',
+            'THU': '목', 'FRI': '금', 'SAT': '토', 'SUN': '일',
+          };
+          return map[d] ?? d;
+        }).join(', ');
+
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('시간이 겹쳐요'),
+            content: Text(
+              '[$days] $_arrivalTimeStr 에 이미 등록된 루틴이 있어요.\n'
+              '시간을 겹치지 않게 설정해주세요.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('취소',
+                    style: TextStyle(color: AppColors.textSecondary)),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('시간 변경하기'),
+              ),
+            ],
+          ),
+        );
+
+        if (confirmed == true && mounted) {
+          // Step 1(기본 정보)로 이동 후 바로 시간 선택 피커 열기
+          setState(() => _step = 0);
+          await Future.delayed(const Duration(milliseconds: 100));
+          if (mounted) _pickTime();
+        }
+      } else if (isDuplicateName) {
+        // Step 1으로 이동해서 이름 필드 포커스
+        setState(() => _step = 0);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('이미 사용 중인 루틴 이름이에요. 다른 이름을 입력해주세요.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('루틴 저장에 실패했어요. 다시 시도해 주세요.')),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('루틴 저장에 실패했어요. 다시 시도해 주세요.')),
+      );
     }
-    if (mounted) context.pop();
   }
 
   @override
@@ -156,11 +273,38 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
                         ? _selectedDays.remove(day)
                         : _selectedDays.add(day)),
                 onPickTime: _pickTime,
+                existingNames: ref.read(routineListProvider).valueOrNull
+                    ?.where((r) => r.routineId != widget.editRoutine?.routineId)
+                    .map((r) => r.routineName)
+                    .toList() ?? [],
                 onNext: () {
                   if (!_step1Key.currentState!.validate()) return;
                   if (_selectedDays.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('요일을 하나 이상 선택해주세요.')));
+                    return;
+                  }
+                  // 동시간대 프론트 체크
+                  final conflictRoutine = (ref.read(routineListProvider).valueOrNull ?? [])
+                      .where((r) => r.routineId != widget.editRoutine?.routineId)
+                      .where((r) => r.targetArrivalTime == _arrivalTimeStr)
+                      .where((r) => r.days.any((d) => _selectedDays.contains(d)))
+                      .firstOrNull;
+                  if (conflictRoutine != null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '$_arrivalTimeStr 에 이미 \'${conflictRoutine.routineName}\' 루틴이 있어요. '
+                          '시간을 겹치지 않게 설정해주세요.',
+                        ),
+                        backgroundColor: AppColors.error,
+                        action: SnackBarAction(
+                          label: '시간 변경',
+                          textColor: Colors.white,
+                          onPressed: _pickTime,
+                        ),
+                      ),
+                    );
                     return;
                   }
                   setState(() => _step = 1);
@@ -189,8 +333,12 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
                 isLoading: _loadingRoutes,
                 selectedIndex: _selectedRouteIndex,
                 onSelect: (i) => setState(() => _selectedRouteIndex = i),
+                onDetail: _showRouteDetail,
                 onSave: _save,
                 onBack: () => setState(() => _step = 1),
+                routineName: _nameController.text.trim(),
+                departureName: _departure?.name ?? '',
+                arrivalName: _arrival?.name ?? '',
               ),
             ][_step],
           ),
@@ -294,6 +442,7 @@ class _Step1 extends StatelessWidget {
   final VoidCallback onPickTime;
   final void Function(String) onDayToggle;
   final VoidCallback onNext;
+  final List<String> existingNames;
 
   const _Step1({
     required this.formKey,
@@ -304,6 +453,7 @@ class _Step1 extends StatelessWidget {
     required this.onPickTime,
     required this.onDayToggle,
     required this.onNext,
+    required this.existingNames,
   });
 
   @override
@@ -326,9 +476,13 @@ class _Step1 extends StatelessWidget {
               maxLength: 20,
               decoration: const InputDecoration(
                   hintText: '예: 출근 루틴', counterText: ''),
-              validator: (v) => (v == null || v.trim().isEmpty)
-                  ? '루틴 이름을 입력해주세요.'
-                  : null,
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) return '루틴 이름을 입력해주세요.';
+                if (existingNames.any((n) => n.trim() == v.trim())) {
+                  return '이미 사용 중인 루틴 이름이에요.';
+                }
+                return null;
+              },
             ),
             const SizedBox(height: 24),
             const Text('반복 요일',
@@ -675,16 +829,24 @@ class _Step3 extends StatelessWidget {
   final bool isLoading;
   final int? selectedIndex;
   final void Function(int) onSelect;
+  final Future<void> Function(RouteModel) onDetail;
   final VoidCallback onSave;
   final VoidCallback onBack;
+  final String routineName;
+  final String departureName;
+  final String arrivalName;
 
   const _Step3({
     required this.routes,
     required this.isLoading,
     required this.selectedIndex,
     required this.onSelect,
+    required this.onDetail,
     required this.onSave,
     required this.onBack,
+    required this.routineName,
+    required this.departureName,
+    required this.arrivalName,
   });
 
   @override
@@ -712,6 +874,25 @@ class _Step3 extends StatelessWidget {
                   style: TextStyle(
                       fontSize: 16, fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
+              // 루틴 이름 + 출발지→도착지 요약
+              if (routineName.isNotEmpty) ...[
+                RichText(
+                  text: TextSpan(
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    children: [
+                      TextSpan(
+                        text: routineName,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary),
+                      ),
+                      const TextSpan(text: '  '),
+                      TextSpan(text: '$departureName → $arrivalName'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
               Text('${routes.length}가지 경로를 찾았어요.',
                   style: const TextStyle(
                       fontSize: 13, color: AppColors.textSecondary)),
@@ -721,8 +902,7 @@ class _Step3 extends StatelessWidget {
                     index: e.key,
                     isSelected: selectedIndex == e.key,
                     onTap: () => onSelect(e.key),
-                    onDetail: () =>
-                        _showRouteDetail(context, e.value),
+                    onDetail: () => onDetail(e.value),
                   )),
             ],
           ),
@@ -755,23 +935,6 @@ class _Step3 extends StatelessWidget {
     );
   }
 
-  void _showRouteDetail(BuildContext context, RouteModel route) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (_) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.75,
-        maxChildSize: 0.95,
-        builder: (_, controller) => _RouteDetailSheet(
-          route: route,
-          scrollController: controller,
-        ),
-      ),
-    );
-  }
 }
 
 class _RouteOptionCard extends StatelessWidget {
@@ -902,8 +1065,8 @@ class _TransitChips extends StatelessWidget {
               ),
               child: Text(
                 paths[i].isSubway
-                    ? '${paths[i].subwayCode ?? ''}호선'
-                    : '${paths[i].busNo ?? ''}번',
+                    ? '${paths[i].no.isNotEmpty ? paths[i].no.first : ''}호선'
+                    : '${paths[i].no.isNotEmpty ? paths[i].no.first : ''}번',
                 style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
@@ -1027,13 +1190,22 @@ class _RouteDetailSheet extends StatelessWidget {
   }
 }
 
-class _DetailPathItem extends StatelessWidget {
+class _DetailPathItem extends StatefulWidget {
   final PathModel path;
   final bool isLast;
   const _DetailPathItem({required this.path, required this.isLast});
 
   @override
+  State<_DetailPathItem> createState() => _DetailPathItemState();
+}
+
+class _DetailPathItemState extends State<_DetailPathItem> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final path = widget.path;
+    final isLast = widget.isLast;
     final color = path.isWalking
         ? AppColors.textSecondary
         : path.isSubway
@@ -1045,9 +1217,22 @@ class _DetailPathItem extends StatelessWidget {
             ? Icons.subway_outlined
             : Icons.directions_bus_outlined;
 
+    final String title = path.isWalking
+        ? '도보'
+        : path.isSubway
+            ? '${path.start ?? ''} 승차 — ${path.no.isNotEmpty ? path.no.first : ''}호선'
+            : '${path.start ?? ''} 승차 — ${path.no.isNotEmpty ? path.no.first : ''}번';
+
+    final String subtitle = '${path.sectionTime}분'
+        '${path.stationCount != null ? ' · ${path.stationCount}정거장' : ''}'
+        '${path.way != null ? ' · ${path.way}' : ''}';
+
+    final bool hasStations = path.stationName.isNotEmpty;
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 타임라인 아이콘 + 연결선
         Column(
           children: [
             Container(
@@ -1058,10 +1243,15 @@ class _DetailPathItem extends StatelessWidget {
               child: Icon(icon, size: 18, color: color),
             ),
             if (!isLast)
-              Container(
-                  width: 2, height: 40,
-                  color: AppColors.border,
-                  margin: const EdgeInsets.symmetric(vertical: 4)),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 2,
+                height: hasStations && _expanded
+                    ? 44.0 + path.stationName.length * 28.0
+                    : 40,
+                color: AppColors.border,
+                margin: const EdgeInsets.symmetric(vertical: 4),
+              ),
           ],
         ),
         const SizedBox(width: 14),
@@ -1071,41 +1261,83 @@ class _DetailPathItem extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  path.isWalking
-                      ? '${path.startName ?? ''} → ${path.endName ?? ''} 도보'
-                      : path.isSubway
-                          ? '${path.startName ?? ''} 승차 — ${path.subwayCode ?? ''}호선'
-                          : '${path.startName ?? ''} 승차 — ${path.busNo ?? ''}번',
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600),
+                // 제목 행 (정거장 있으면 클릭 시 토글)
+                GestureDetector(
+                  onTap: hasStations
+                      ? () => setState(() => _expanded = !_expanded)
+                      : null,
+                  behavior: HitTestBehavior.opaque,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(title,
+                            style: const TextStyle(
+                                fontSize: 14, fontWeight: FontWeight.w600)),
+                      ),
+                      if (hasStations)
+                        Icon(
+                          _expanded
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
+                          size: 18,
+                          color: AppColors.textSecondary,
+                        ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  '${path.sectionTime}분'
-                  '${path.stationCount != null ? ' · ${path.stationCount}정거장' : ''}'
-                  '${path.way != null ? ' · ${path.way}' : ''}',
-                  style: const TextStyle(
-                      fontSize: 13, color: AppColors.textSecondary),
-                ),
-                if (path.passStopList.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: path.passStopList.map((s) =>
-                        Container(
-                          margin: const EdgeInsets.only(right: 4),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                              color: color.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(6)),
-                          child: Text(s,
-                              style: TextStyle(fontSize: 11, color: color)),
-                        )).toList(),
-                    ),
-                  ),
+                Text(subtitle,
+                    style: const TextStyle(
+                        fontSize: 13, color: AppColors.textSecondary)),
+                // 정류장 수직 목록 (펼쳤을 때)
+                if (hasStations && _expanded) ...[
+                  const SizedBox(height: 8),
+                  ...path.stationName.asMap().entries.map((e) {
+                    final isFirst = e.key == 0;
+                    final isLastStation =
+                        e.key == path.stationName.length - 1;
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 8, height: 8,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: (isFirst || isLastStation)
+                                      ? color
+                                      : color.withValues(alpha: 0.3),
+                                  border:
+                                      Border.all(color: color, width: 1.5),
+                                ),
+                              ),
+                              if (!isLastStation)
+                                Container(
+                                  width: 2, height: 20,
+                                  color: color.withValues(alpha: 0.25),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Text(e.value,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: (isFirst || isLastStation)
+                                      ? color
+                                      : AppColors.textSecondary,
+                                  fontWeight: (isFirst || isLastStation)
+                                      ? FontWeight.w600
+                                      : FontWeight.normal)),
+                        ),
+                      ],
+                    );
+                  }),
                 ],
               ],
             ),

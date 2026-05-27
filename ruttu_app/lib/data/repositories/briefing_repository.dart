@@ -115,40 +115,35 @@ class MockBriefingRepository implements BriefingRepository {
   @override
   Future<RouteModel?> getMeetingRoute() async {
     await Future.delayed(const Duration(milliseconds: 300));
-    return const RouteModel(
-      pathType: 1,
+    return RouteModel(
+      recoId: 99,
       totalDistance: 12260,
-      trafficDistance: 11700,
-      totalWalk: 560,
       totalTime: 39,
       payment: 1650,
-      path: [
+      startName: '회사',
+      endName: '을지로 본사',
+      path: const [
         PathModel(
-          trafficType: 3,
-          distance: 263,
+          type: 'walk',
           sectionTime: 4,
-          startName: '회사',
-          endName: '강남역',
+          start: '회사',
+          end: '강남역',
         ),
         PathModel(
-          trafficType: 1,
-          distance: 9800,
+          type: 'subway',
           sectionTime: 28,
+          no: ['2'],
           stationCount: 9,
-          subwayCode: 2,
-          startName: '강남',
-          endName: '을지로입구',
+          start: '강남',
+          end: '을지로입구',
           way: '성수방향',
-          wayCode: 1,
-          door: '2-3',
-          passStopList: ['강남', '역삼', '선릉', '삼성', '종합운동장', '잠실새내', '잠실', '신천', '강변'],
+          stationName: ['강남', '역삼', '선릉', '삼성', '종합운동장', '잠실새내', '잠실', '신천', '강변'],
         ),
         PathModel(
-          trafficType: 3,
-          distance: 297,
+          type: 'walk',
           sectionTime: 5,
-          startName: '을지로입구역',
-          endName: '을지로 본사',
+          start: '을지로입구역',
+          end: '을지로 본사',
         ),
       ],
     );

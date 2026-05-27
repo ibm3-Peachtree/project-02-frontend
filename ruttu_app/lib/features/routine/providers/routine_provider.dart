@@ -1,11 +1,17 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/network/api_client.dart';
 import '../../../data/models/routine_model.dart';
 import '../../../data/models/address_model.dart';
 import '../../../data/models/route_model.dart';
 import '../../../data/repositories/routine_repository.dart';
+import '../../auth/providers/auth_provider.dart';
+
+final apiClientProvider = Provider<ApiClient>(
+  (ref) => ApiClient(ref.read(tokenStorageProvider)),
+);
 
 final routineRepositoryProvider = Provider<RoutineRepository>(
-  (_) => MockRoutineRepository(),
+  (ref) => ApiRoutineRepository(ref.read(apiClientProvider)),
 );
 
 // 루틴 목록

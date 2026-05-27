@@ -1,65 +1,72 @@
+import 'package:flutter/foundation.dart';
+import 'package:dio/dio.dart';
 class ApiConstants {
   ApiConstants._();
 
-  // 서버 주소 (환경변수로 교체 예정)
-  static const springBaseUrl = 'https://api.ruttu.app/api/v1';
-  static const fastapiBaseUrl = 'https://ai.ruttu.app/api/v1';
+static String get springBaseUrl {
+  return 'http://10.0.2.2:8080';
+}
+  static String get fastapiBaseUrl => springBaseUrl;
 
   // ── 1. Auth ──────────────────────────────────────────────
-  static const googleLogin = '/auth/google';        // POST — idToken → accessToken+refreshToken+userId
-  static const logout     = '/auth/logout';          // POST — refreshToken
+  static const googleLogin = '/auth/google';
+  static const logout = '/auth/logout';
+  static const refreshToken = '/auth/refresh';
 
   // ── 2. User ──────────────────────────────────────────────
-  static const deleteAccount   = '/users/me';              // DELETE
-  static const updateNickname  = '/users/mypage/nickname'; // PUT — { nickname }
+  static const deleteAccount = '/users/me';
+  static const updateNickname = '/users/mypage/nickname';
 
   // ── 3. Address ───────────────────────────────────────────
-  static const addresses       = '/address';               // GET(목록), POST(생성)
-  static String addressById(int id) => '/address/$id';     // DELETE, PUT
+  static const addresses = '/address';
+  static String addressById(int id) => '/address/$id';
 
   // ── 4. Notification / Settings ───────────────────────────
-  static const notificationSettings = '/users/me/settings'; // GET
-  static const updateSettings        = '/settings';          // PUT
+  static const notificationSettings = '/users/me/settings';
+  static const updateSettings = '/settings';
 
   // ── 5. Routine ───────────────────────────────────────────
-  static const routines          = '/routines';             // GET(목록), POST(생성)
-  static String routineById(int id) => '/routines/$id';    // GET(상세), PUT, DELETE
+  static const routines = '/me/routines';
+  static String routineById(int id) => '/me/routines/$id';
+  static const routeRecommend = '/me/routines/routes/recommend';
+  static String routeRecommendDetail(int recoId) =>
+      '/me/routines/routes/recommend/$recoId';
 
   // ── 6. Live Routine ──────────────────────────────────────
-  static const liveStatus       = '/me/routines/active/status'; // GET — 현재 단계
-  static const liveMyRoute      = '/me/routines/active/route';  // GET — 나의 경로
-  static const liveRecoRoute    = '/me/routes/active/reco';     // GET — 추천 경로
-  static const liveLocation     = '/me/routines/active';        // POST — 위치 저장
-  static const todayIssues      = '/me/issues';                  // GET — 오늘의 이슈
+  static const liveStatus = '/me/routines/active/status';
+  static const liveMyRoute = '/me/routines/active/route';
+  static const liveRecoRoute = '/me/routes/active/reco';
+  static const liveLocation = '/me/routines/active';
+  static const todayIssues = '/me/issues';
 
   // ── 7. Report ────────────────────────────────────────────
-  static const weeklyReport  = '/me/reports/weekly';   // GET
-  static const monthlyReport = '/me/reports/monthly';  // GET
+  static const weeklyReport = '/me/reports/weekly';
+  static const monthlyReport = '/me/reports/monthly';
 
   // ── 8. Feed ──────────────────────────────────────────────
-  static const feeds    = '/feeds';     // GET
-  static const hotFeed  = '/feeds/hot'; // GET
+  static const feeds = '/feeds';
+  static const hotFeed = '/feeds/hot';
 
   // ── 9. Post ──────────────────────────────────────────────
-  static const posts      = '/posts';           // GET(목록), POST(작성)
-  static const myPosts    = '/posts/me';        // GET
-  static String postById(int id) => '/posts/$id'; // GET(상세), PUT, DELETE
+  static const posts = '/posts';
+  static const myPosts = '/posts/me';
+  static String postById(int id) => '/posts/$id';
 
   // ── 10. Comment ──────────────────────────────────────────
-  static const myComments = '/comments/me';                             // GET
-  static String postComments(int postId) => '/posts/$postId/comments'; // GET, POST
-  static String commentById(int id) => '/comments/$id';                // DELETE
+  static const myComments = '/comments/me';
+  static String postComments(int postId) => '/posts/$postId/comments';
+  static String commentById(int id) => '/comments/$id';
 
   // ── 11. Post Report ──────────────────────────────────────
-  static String reportPost(int postId)       => '/posts/$postId/report';    // POST
-  static String reportComment(int commentId) => '/comments/$commentId/report'; // POST
+  static String reportPost(int postId) => '/posts/$postId/report';
+  static String reportComment(int commentId) =>
+      '/comments/$commentId/report';
 
   // ── 12. Feedback ─────────────────────────────────────────
-  static const feedback = '/me/feedback'; // POST
+  static const feedback = '/me/feedback';
 
   // ── 13. Briefing (FastAPI) ───────────────────────────────
-  static const briefingRoute       = '/me/briefing/route';               // GET
-  static const briefingWeather     = '/me/briefing/weather-air-quality'; // GET
-  // AI 요약: GET /{user_id}  — 경로 동적이므로 메서드로 제공
+  static const briefingRoute = '/me/briefing/route';
+  static const briefingWeather = '/me/briefing/weather-air-quality';
   static String aiSummary(int userId) => '/$userId';
 }
