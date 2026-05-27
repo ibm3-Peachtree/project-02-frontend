@@ -10,8 +10,8 @@ void main() async {
   await initializeDateFormatting('ko', null);
 
   // ✅ 네이버 지도 초기화 — 반드시 runApp 전에 호출
-  await NaverMapSdk.instance.initialize(
-    clientId: 'bkwlse8ybe', // ← 네이버 클라우드에서 발급받은 Client ID로 교체
+  await FlutterNaverMap().init(
+    clientId: 'bkwlse8ybe',
     onAuthFailed: (e) => debugPrint('네이버 지도 인증 실패: $e'),
   );
 

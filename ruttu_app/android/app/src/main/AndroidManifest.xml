@@ -13,7 +13,7 @@
 
         <!-- 네이버 지도 Client ID — application 바로 아래에 위치해야 함 -->
         <meta-data
-            android:name="com.naver.maps.map.CLIENT_ID"
+            android:name="com.naver.maps.map.NCP_KEY_ID"
             android:value="bkwlse8ybe" />
 
         <activity

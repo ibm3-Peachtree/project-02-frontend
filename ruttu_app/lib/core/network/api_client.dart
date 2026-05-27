@@ -23,8 +23,10 @@ class ApiClient {
           handler.next(options);
         },
         onError: (error, handler) async {
+          final statusCode = error.response?.statusCode;
+
           // 401 → refreshToken으로 자동 갱신 후 재시도
-          if (error.response?.statusCode == 401) {
+          if (statusCode == 401) {
             final refresh = await _tokenStorage.getRefreshToken();
             if (refresh != null && refresh.isNotEmpty) {
               try {
@@ -54,6 +56,13 @@ class ApiClient {
               onSessionExpired?.call();
             }
           }
+
+          // 403 → 인증 권한 없음 (만료된 토큰 등) → 즉시 로그아웃
+          if (statusCode == 403) {
+            await _tokenStorage.clearTokens();
+            onSessionExpired?.call();
+          }
+
           handler.next(error);
         },
       ),

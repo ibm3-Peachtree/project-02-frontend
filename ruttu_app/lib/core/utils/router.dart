@@ -21,6 +21,7 @@ import '../../features/mypage/screens/my_community_activity_screen.dart';
 import '../../features/mypage/screens/account_deleted_screen.dart';
 import '../../features/auth/providers/auth_provider.dart';
 import '../../features/auth/providers/auth_state.dart';
+import '../../features/auth/providers/network_provider.dart';
 import '../constants/route_constants.dart';
 import '../widgets/main_scaffold.dart';
 
@@ -29,6 +30,14 @@ final routerProvider = Provider<GoRouter>((ref) {
 
   ref.listen(authProvider, (_, _) {
     authListenable.value++;
+  });
+
+  // 세션 만료 시 토큰 삭제 후 로그인 화면으로 강제 이동
+  ref.listen(sessionExpiredProvider, (_, expired) async {
+    if (expired) {
+      await ref.read(authProvider.notifier).signOut();
+      ref.read(sessionExpiredProvider.notifier).state = false;
+    }
   });
 
   return GoRouter(
