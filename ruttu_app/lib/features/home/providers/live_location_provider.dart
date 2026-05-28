@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -43,7 +44,7 @@ final liveLocationProvider = Provider<void>((ref) {
     sub = null;
     // ✅ ref가 살아있을 때만 상태 변경
     try { ref.read(gpsActiveProvider.notifier).state = false; } catch (_) {}
-    print('[LiveLocation] GPS 종료됨');
+    debugPrint('[LiveLocation] GPS 종료됨');
   }
 
   void startGps() {
@@ -74,7 +75,7 @@ final liveLocationProvider = Provider<void>((ref) {
                   accuracy: position.accuracy,
                 );
           } catch (e) {
-            print('[LiveLocation] 전송 실패: $e');
+            debugPrint('[LiveLocation] 전송 실패: $e');
           }
 
           final addresses = await getAddresses();
@@ -88,7 +89,7 @@ final liveLocationProvider = Provider<void>((ref) {
                 dep!.latitude!, dep.longitude!,
               );
               if (dist > _departureRadiusMeters) {
-                print('[LiveLocation] 출발지 이탈 (${dist.toStringAsFixed(0)}m) → 경로 시작');
+                debugPrint('[LiveLocation] 출발지 이탈 (${dist.toStringAsFixed(0)}m) → 경로 시작');
                 await ref.read(homeProvider.notifier).startRoute();
                 return;
               }
@@ -104,7 +105,7 @@ final liveLocationProvider = Provider<void>((ref) {
                 arr!.latitude!, arr.longitude!,
               );
               if (dist <= _arrivalRadiusMeters) {
-                print('[LiveLocation] 목적지 도달 → GPS 종료');
+                debugPrint('[LiveLocation] 목적지 도달 → GPS 종료');
                 ref.read(homeProvider.notifier).arriveByGps();
                 stopGps();
               }
@@ -112,14 +113,14 @@ final liveLocationProvider = Provider<void>((ref) {
           }
         },
         onError: (e) {
-          print('[LiveLocation] 스트림 에러: $e');
+          debugPrint('[LiveLocation] 스트림 에러: $e');
           // ✅ 에러 시에도 GPS 상태 초기화
           try { ref.read(gpsActiveProvider.notifier).state = false; } catch (_) {}
         },
       );
-      print('[LiveLocation] GPS 스트림 구독 시작');
+      debugPrint('[LiveLocation] GPS 스트림 구독 시작');
     }).catchError((e) {
-      print('[LiveLocation] 권한 오류: $e — GPS 켜기 실패');
+      debugPrint('[LiveLocation] 권한 오류: $e — GPS 켜기 실패');
       // ✅ 권한 거부 시 gpsActive = false 유지, 재시도 안 함
     });
   }
@@ -128,12 +129,12 @@ final liveLocationProvider = Provider<void>((ref) {
   scheduleTimer = Timer.periodic(const Duration(minutes: 1), (_) {
     final homeState = ref.read(homeProvider);
     if (homeState.status == HomeStatus.preActive && homeState.isDepartureImminent) {
-      print('[LiveLocation] 출발 예정 10분 전 → GPS 자동 시작');
+      debugPrint('[LiveLocation] 출발 예정 10분 전 → GPS 자동 시작');
       startGps();
     }
     // active인데 GPS가 꺼져 있으면 재시작 (앱 재시작 후 복구)
     if (homeState.status == HomeStatus.active && sub == null) {
-      print('[LiveLocation] active 상태인데 GPS 꺼짐 → 재시작');
+      debugPrint('[LiveLocation] active 상태인데 GPS 꺼짐 → 재시작');
       startGps();
     }
   });

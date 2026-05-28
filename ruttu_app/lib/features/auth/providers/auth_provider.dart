@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import '../../../core/config/env_config.dart';
 import '../../../data/repositories/auth_repository.dart';
 import '../../../data/services/token_storage.dart';
 import 'auth_state.dart';
@@ -64,35 +66,42 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   /// Google Sign-In SDK → idToken → POST /auth/google
   Future<void> signInWithGoogle() async {
-    print("🔥 로그인 함수 시작");
+    debugPrint("🔥 로그인 함수 시작");
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
-      print("1. login start");
+      debugPrint("1. login start");
       final googleSignIn = GoogleSignIn(
         scopes: ['openid', 'email', 'profile'],
-        serverClientId: '555767445860-rcbt294kkpvs94nuvp0jdpt03j7n8c2s.apps.googleusercontent.com',
+        serverClientId: EnvConfig.googleServerClientId,
       );
       final googleUser = await googleSignIn.signIn();
-      print("2. google done");
+      debugPrint("2. google done");
 
       if (googleUser == null) {
-        throw Exception('로그인 취소됨');
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: '로그인이 취소됐습니다.',
+        );
+        return;
       }
-      print("🔥 googleUser: $googleUser");
+      debugPrint("🔥 googleUser: $googleUser");
       final googleAuth = await googleUser.authentication;
-      print("🔥 accessToken: ${googleAuth.accessToken}");
-      print("🔥 idToken: ${googleAuth.idToken}");
+      debugPrint("🔥 accessToken: ${googleAuth.accessToken}");
+      debugPrint("🔥 idToken: ${googleAuth.idToken}");
 
       final idToken = googleAuth.idToken;
       if (idToken == null) {
+        // serverClientId가 잘못됐거나 Google Cloud Console 설정 문제
+        debugPrint("❌ idToken null — serverClientId 확인 필요: ${EnvConfig.googleServerClientId}");
         state = state.copyWith(
           isLoading: false,
-          errorMessage: 'Google 로그인 실패',
+          status: AuthStatus.unauthenticated,
+          errorMessage: 'Google 인증 토큰을 받지 못했습니다. 잠시 후 다시 시도해주세요.',
         );
         return;
       }
       final response = await _repository.signInWithGoogle(idToken);
-      print("4. API call done");
+      debugPrint("4. API call done");
       await _tokenStorage.saveTokens(
         accessToken: response.accessToken,
         refreshToken: response.refreshToken,
@@ -106,9 +115,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
         user: user,
       );
     } catch (e) {
-      state = const AuthState(
+      debugPrint("❌ 로그인 전체 에러: $e");
+      state = AuthState(
         status: AuthStatus.unauthenticated,
-        errorMessage: '로그인에 실패했습니다. 다시 시도해주세요.',
+        errorMessage: e.toString(),  // 실제 에러 그대로 표시
       );
     }
   }
@@ -126,9 +136,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       final refreshToken = await _tokenStorage.getRefreshToken() ?? '';
       await _repository.signOut(refreshToken);
-      print(" 로그아웃 API 성공");
+      debugPrint(" 로그아웃 API 성공");
     } catch (e) {
-      print("로그아웃 API 실패: $e");
+      debugPrint("로그아웃 API 실패: $e");
     }
     await _tokenStorage.clearTokens();
     await GoogleSignIn().signOut();

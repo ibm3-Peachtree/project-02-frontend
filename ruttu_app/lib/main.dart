@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'core/config/env_config.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/router.dart';
 
@@ -9,9 +10,13 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('ko', null);
 
-  // ✅ 네이버 지도 초기화 — 반드시 runApp 전에 호출
+  // 환경 변수 로드 (dev/prod 자동 선택)
+  await EnvConfig.load();
+  debugPrint("🔧 환경: ${EnvConfig.springBaseUrl}");
+
+  // 네이버 지도 초기화
   await FlutterNaverMap().init(
-    clientId: 'bkwlse8ybe',
+    clientId: EnvConfig.naverMapClientId,
     onAuthFailed: (e) => debugPrint('네이버 지도 인증 실패: $e'),
   );
 

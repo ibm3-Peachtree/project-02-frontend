@@ -1,12 +1,10 @@
-import 'package:flutter/foundation.dart';
-import 'package:dio/dio.dart';
+import '../config/env_config.dart';
+
 class ApiConstants {
   ApiConstants._();
 
-static String get springBaseUrl {
-  return 'http://10.0.2.2:8080';
-}
-  static String get fastapiBaseUrl => springBaseUrl;
+  static String get springBaseUrl => EnvConfig.springBaseUrl;
+  static String get fastapiBaseUrl => EnvConfig.fastapiBaseUrl;
 
   // ── 1. Auth ──────────────────────────────────────────────
   static const googleLogin = '/auth/google';

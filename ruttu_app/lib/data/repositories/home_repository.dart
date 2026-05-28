@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import '../models/routine_model.dart';
 import '../models/route_model.dart';
 import '../models/weather_model.dart';
@@ -155,9 +156,9 @@ class MockHomeRepository implements HomeRepository {
           'accuracy': accuracy,
         },
       );
-      print('[LiveLocation] 전송 성공: lat=$latitude, lng=$longitude');
+      debugPrint('[LiveLocation] 전송 성공: lat=$latitude, lng=$longitude');
     } catch (e) {
-      print('[LiveLocation] 전송 실패 (무시됨): $e');
+      debugPrint('[LiveLocation] 전송 실패 (무시됨): $e');
     }
   }
 }

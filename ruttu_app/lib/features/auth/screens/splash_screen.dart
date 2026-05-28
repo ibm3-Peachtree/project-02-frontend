@@ -26,6 +26,22 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     await ref.read(authProvider.notifier).signInWithGoogle();
   }
 
+  String _friendlyError(String raw) {
+    if (raw.contains('503') || raw.contains('Service Unavailable')) {
+      return '서버 점검 중이에요.\n잠시 후 다시 시도해주세요.';
+    }
+    if (raw.contains('SocketException') || raw.contains('network')) {
+      return '네트워크 연결을 확인해주세요.';
+    }
+    if (raw.contains('idToken') || raw.contains('Google 인증')) {
+      return 'Google 인증에 실패했어요.\n다시 시도해주세요.';
+    }
+    if (raw.contains('취소')) {
+      return '로그인이 취소됐어요.';
+    }
+    return '로그인에 실패했어요.\n잠시 후 다시 시도해주세요.';
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
@@ -70,10 +86,18 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                   auth.status == AuthStatus.unknown) ...[
                 if (auth.errorMessage != null)
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(
-                      auth.errorMessage!,
-                      style: const TextStyle(color: Colors.white70),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        _friendlyError(auth.errorMessage!),
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                   ),
                 Padding(
