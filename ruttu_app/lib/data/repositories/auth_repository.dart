@@ -45,12 +45,12 @@ class ApiAuthRepository implements AuthRepository {
 
   @override
   Future<LoginResponse> signInWithGoogle(String idToken) async {
-    print("🔥 API 호출 시작");
+    print("🔥 Login API 호출 시작");
     final res = await _dio.post(
       ApiConstants.googleLogin, // '/auth/google'
       data: {'idToken': idToken},
     );
-    print("🔥 API 응답 옴");
+    print("🔥 Login API 응답 옴");
     final loginRes = LoginResponse.fromJson(res.data);
     // 로그인 성공 시 유저 캐싱
     _cachedUser = UserModel(

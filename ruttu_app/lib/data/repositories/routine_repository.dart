@@ -59,7 +59,8 @@ abstract class RoutineRepository {
   Future<List<AddressModel>> getAddresses();
   Future<AddressModel> addAddress({
     required String name,
-    required String address,
+    required String roadAddress,
+    String? jibunAddress,
     double? latitude,
     double? longitude,
   });
@@ -147,13 +148,15 @@ class ApiRoutineRepository implements RoutineRepository {
   @override
   Future<AddressModel> addAddress({
     required String name,
-    required String address,
+    required String roadAddress,
+    String? jibunAddress,
     double? latitude,
     double? longitude,
   }) =>
       MockRoutineRepository().addAddress(
         name: name,
-        address: address,
+        roadAddress: roadAddress,
+        jibunAddress: jibunAddress,
         latitude: latitude,
         longitude: longitude,
       );
@@ -189,21 +192,21 @@ class MockRoutineRepository implements RoutineRepository {
       AddressModel(
         addressId: 4,
         name: "집",
-        address: "서울특별시 강남구 테헤란로 123",
+        roadAddress: "서울특별시 강남구 테헤란로 123",
         latitude: 37.5012,
         longitude: 127.0396,
       ),
       AddressModel(
         addressId: 5,
         name: "회사",
-        address: "서울특별시 중구 세종대로 110",
+        roadAddress: "서울특별시 중구 세종대로 110",
         latitude: 37.5665,
         longitude: 126.9780,
       ),
       AddressModel(
         addressId: 6,
         name: "헬스장",
-        address: "서울특별시 서초구 서초대로 74길 11",
+        roadAddress: "서울특별시 서초구 서초대로 74길 11",
         latitude: 37.4842,
         longitude: 127.0348,
       ),
@@ -213,7 +216,8 @@ class MockRoutineRepository implements RoutineRepository {
   @override
   Future<AddressModel> addAddress({
     required String name,
-    required String address,
+    required String roadAddress,
+    String? jibunAddress,
     double? latitude,
     double? longitude,
   }) async {

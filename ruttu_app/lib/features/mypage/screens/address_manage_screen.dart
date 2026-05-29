@@ -247,12 +247,15 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
   }
 
   void _save() {
+    print("🔥 _save 함수 진입");
     if (_nameCtrl.text.trim().isEmpty) {
+      print("🔥 이름 없음 - return");
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('장소 이름을 입력해주세요.')));
       return;
     }
     if (!_hasAddress) {
+      print("🔥 주소 없음 - return");
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('주소를 검색하여 선택해주세요.')));
       return;
@@ -266,7 +269,9 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
     } else {
       fullAddress = _prefilledAddress!;
     }
-    widget.onSave(_nameCtrl.text.trim(), fullAddress);
+    print("🔥 onSave 호출 직전");
+    print("🔥 name = ${_nameCtrl.text.trim()}");
+    print("🔥 address = $fullAddress");
   }
 
   @override

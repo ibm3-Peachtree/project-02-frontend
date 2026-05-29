@@ -2,14 +2,16 @@
 class AddressModel {
   final int addressId;
   final String name;       // 별칭 (예: "집", "회사")
-  final String address;    // 도로명주소 (+ 상세주소)
+  final String roadAddress; // 도로명주소
+  final String? jibunAddress;  //지번주소
   final double? latitude;  // 백엔드 geocoding 후 채워짐
   final double? longitude;
 
   const AddressModel({
     required this.addressId,
     required this.name,
-    required this.address,
+    required this.roadAddress,
+    this.jibunAddress,
     this.latitude,
     this.longitude,
   });
@@ -17,7 +19,8 @@ class AddressModel {
   factory AddressModel.fromJson(Map<String, dynamic> json) => AddressModel(
         addressId: json['addressId'] as int,
         name:      json['name']      as String,
-        address:   json['address']   as String,
+        roadAddress:   json['roadAddress']   as String,
+        jibunAddress:   json['jibunAddress']   as String,
         latitude:  (json['latitude']  as num?)?.toDouble(),
         longitude: (json['longitude'] as num?)?.toDouble(),
       );
@@ -25,7 +28,8 @@ class AddressModel {
   Map<String, dynamic> toJson() => {
         'addressId': addressId,
         'name':      name,
-        'address':   address,
+        'roadAddress':   roadAddress,
+        'jibunAddress':   jibunAddress,
         if (latitude  != null) 'latitude':  latitude,
         if (longitude != null) 'longitude': longitude,
       };

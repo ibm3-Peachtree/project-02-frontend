@@ -154,9 +154,9 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
       routineName: routineName,
       targetArrivalTime: _arrivalTimeStr,
       originAlias: _departure!.name,
-      origin: _departure!.address,
+      origin: _departure!.roadAddress,
       destinationAlias: _arrival!.name,
-      destination: _arrival!.address,
+      destination: _arrival!.roadAddress,
       recoId: selectedRoute.recoId ?? _selectedRouteIndex!,
       days: _selectedDays.toList(),
     );
@@ -628,7 +628,7 @@ class _Step2 extends ConsumerWidget {
                       color: AppColors.primary),
                   title: Text(a.name,
                       style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(a.address,
+                  subtitle: Text(a.roadAddress,
                       style: const TextStyle(fontSize: 13)),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -734,7 +734,7 @@ class _AddressPickerField extends ConsumerWidget {
                             : AppColors.textSecondary),
                   ),
                   if (selected != null)
-                    Text(selected!.address,
+                    Text(selected!.roadAddress,
                         style: const TextStyle(
                             fontSize: 12,
                             color: AppColors.textSecondary)),
@@ -770,7 +770,7 @@ class _AddressPickerField extends ConsumerWidget {
                       color: AppColors.primary),
                   title: Text(a.name,
                       style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(a.address),
+                  subtitle: Text(a.roadAddress),
                   onTap: () {
                     Navigator.pop(sheetCtx);
                     onSelect(a);
@@ -807,13 +807,16 @@ class _AddressPickerField extends ConsumerWidget {
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (ctx) => _AddAddressSheet(
-        onSave: (name, address, lat, lng) async {
+        onSave: (name, road, jibun, lat, lng) async {
+          print("🔥 onSave 호출됨");
+          print("🔥 repository 호출 직전");
           final newAddr =
               await ref.read(routineRepositoryProvider).addAddress(
                     name: name,
-                    address: address,
-                    latitude: lat,   // null until backend geocoding
-                    longitude: lng,  // null until backend geocoding
+                    roadAddress: road,
+                    jibunAddress: jibun,
+                    latitude: null,   // null until backend geocoding
+                    longitude: null,  // null until backend geocoding
                   );
           ref.invalidate(addressListProvider);
           if (ctx.mounted) Navigator.pop(ctx, newAddr);
@@ -1369,7 +1372,7 @@ class _SummaryItem extends StatelessWidget {
 
 // ── 새 주소 추가 바텀 시트 ────────────────────────────
 class _AddAddressSheet extends StatefulWidget {
-  final Future<void> Function(String name, String address, double? lat, double? lng) onSave;
+  final Future<void> Function(String name, String roadAddress, String jibunAddress, double? lat, double? lng) onSave;
   const _AddAddressSheet({required this.onSave});
 
   @override
@@ -1399,19 +1402,26 @@ class _AddAddressSheetState extends State<_AddAddressSheet> {
   }
 
   Future<void> _save() async {
+    print("🔥 _save 시작");
+    print("🔥 validate 체크 전");
     if (!_formKey.currentState!.validate()) return;
+    print("🔥 validate 통과");
     if (_kakaoResult == null) {
+      print("🔥 kakaoResult null");
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('주소를 검색하여 선택해주세요.')));
       return;
     }
+    print("🔥 kakaoResult OK");
+    print("🔥 onSave 직전");
     setState(() => _saving = true);
     try {
       final detail = _detailCtrl.text.trim();
       final fullAddress = detail.isEmpty
           ? _kakaoResult!.roadAddress
           : '${_kakaoResult!.roadAddress} $detail';
-      await widget.onSave(_nameCtrl.text.trim(), fullAddress, null, null);
+      await widget.onSave(_nameCtrl.text.trim(), _kakaoResult!.roadAddress,
+          _kakaoResult!.jibunAddress, null, null);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
