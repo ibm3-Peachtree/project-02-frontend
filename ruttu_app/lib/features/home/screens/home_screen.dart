@@ -309,11 +309,8 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
   }
 
   void _onStartTap() {
-    _showRouteSelectionSheet(
-      context,
-      widget.home.activeRoutine!.targetArrivalTime,
-      () => ref.read(homeProvider.notifier).startRoute(),
-    );
+    // 경로는 "추천 경로" 탭에서 미리 확인 가능 → 바로 출발
+    ref.read(homeProvider.notifier).startRoute();
   }
 
   @override
@@ -406,7 +403,8 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                             route: widget.home.recommendedRoute,
                             hasIncident: false,
                             onKeep: () => _tabController.animateTo(0),
-                            onSwitch: _onStartTap,
+                            // 추천 경로로 변경: 상태는 그대로, 탭만 나의 경로로 전환
+                            onSwitch: () => _tabController.animateTo(0),
                           ),
                         ),
                       ],
@@ -445,6 +443,16 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     _tabController = TabController(length: 2, vsync: this);
   }
 
+  @override
+  void didUpdateWidget(_ActiveView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 좌표가 바뀌면 지도 폴리라인 다시 그리기
+    if (_mapController != null &&
+        widget.home.routeCoordinates != oldWidget.home.routeCoordinates) {
+      _drawRouteOnMap(_mapController!, widget.home.routeCoordinates);
+    }
+  }
+
   Future<void> _moveToCurrentLocation(NaverMapController controller) async {
     try {
       final permission = await Geolocator.checkPermission();
@@ -460,6 +468,72 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
         ),
       );
     } catch (_) {}
+  }
+
+  /// RouteXYModel 목록을 type별로 색상을 달리해 NPathOverlay로 그립니다.
+  /// x = 경도(longitude), y = 위도(latitude)
+  Future<void> _drawRouteOnMap(
+      NaverMapController controller, List<RouteXYModel> coords) async {
+    if (coords.isEmpty) return;
+
+    // 기존 오버레이 전부 제거
+    await controller.clearOverlays();
+
+    // type별로 연속 구간을 그룹핑
+    final segments = <({String type, List<NLatLng> points})>[];
+    String? currentType;
+    List<NLatLng> currentPoints = [];
+
+    for (final c in coords) {
+      if (c.x == null || c.y == null) continue;
+      final pt = NLatLng(c.y!, c.x!); // y=lat, x=lng
+      final type = c.type ?? 'walk';
+      if (type != currentType) {
+        if (currentPoints.length >= 2 && currentType != null) {
+          segments.add((type: currentType!, points: List.of(currentPoints)));
+        }
+        currentType = type;
+        currentPoints = [pt];
+      } else {
+        currentPoints.add(pt);
+      }
+    }
+    // 마지막 구간
+    if (currentPoints.length >= 2 && currentType != null) {
+      segments.add((type: currentType!, points: List.of(currentPoints)));
+    }
+
+    Color typeColor(String type) {
+      switch (type) {
+        case 'subway': return Colors.blue;
+        case 'bus':    return Colors.green;
+        default:       return AppColors.textSecondary; // walk
+      }
+    }
+
+    for (var i = 0; i < segments.length; i++) {
+      final seg = segments[i];
+      if (seg.points.length < 2) continue;
+      final overlay = NPathOverlay(
+        id: 'route_seg_$i',
+        coords: seg.points,
+        color: typeColor(seg.type),
+        width: 5,
+        outlineColor: Colors.white,
+        outlineWidth: 1,
+      );
+      await controller.addOverlay(overlay);
+    }
+
+    // 현재 위치 마커
+    final cur = coords[widget.home.currentStepIndex.clamp(0, coords.length - 1)];
+    if (cur.x != null && cur.y != null) {
+      final marker = NMarker(
+        id: 'current_pos',
+        position: NLatLng(cur.y!, cur.x!),
+      );
+      await controller.addOverlay(marker);
+    }
   }
 
   @override
@@ -490,6 +564,10 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
             onMapReady: (controller) {
               _mapController = controller;
               _moveToCurrentLocation(controller);
+              // 좌표가 이미 있으면 바로 경로 그리기
+              if (widget.home.routeCoordinates.isNotEmpty) {
+                _drawRouteOnMap(controller, widget.home.routeCoordinates);
+              }
             },
           ),
           SafeArea(
@@ -555,6 +633,7 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                             hasIncident: false,
                             onKeep: () => _tabController.animateTo(0),
                             onSwitch: () {
+                              ref.read(homeProvider.notifier).switchToRecommendedRoute();
                               _tabController.animateTo(0);
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(content: Text('추천 경로로 변경되었어요.')),
@@ -635,7 +714,7 @@ class _PreActivePanel extends StatefulWidget {
   final RoutineModel routine;
   final bool isImminent;
   final String? aiSummary;
-  final RouteModel? myRoute;
+  final LiveRouteModel? myRoute;
 
   const _PreActivePanel({
     required this.routine,
@@ -776,7 +855,7 @@ class _PreActivePanelState extends State<_PreActivePanel> {
 
 class _ActivePanel extends StatelessWidget {
   final RoutineModel routine;
-  final RouteModel? route;
+  final LiveRouteModel? route;
   final int currentStepIndex;
   final String liveStatusText;
   final int stepRemainingMinutes;
@@ -884,7 +963,7 @@ class _ActivePanel extends StatelessWidget {
 // 추천 경로 패널
 // ───────────────────────────────────────────────
 class _RecommendedPanel extends StatelessWidget {
-  final RouteModel? route;
+  final LiveRouteModel? route;
   final bool hasIncident;
   final VoidCallback onKeep;
   final VoidCallback onSwitch;
@@ -1395,7 +1474,7 @@ class _RoutineStepDots extends StatelessWidget {
 // ───────────────────────────────────────────────
 // 공통 위젯: 경로 단계 항목
 // ───────────────────────────────────────────────
-class _PathItem extends StatelessWidget {
+class _PathItem extends StatefulWidget {
   final PathModel path;
   final bool isCurrent;
   final bool isLast;
@@ -1403,7 +1482,18 @@ class _PathItem extends StatelessWidget {
   const _PathItem({required this.path, required this.isCurrent, this.isLast = false});
 
   @override
+  State<_PathItem> createState() => _PathItemState();
+}
+
+class _PathItemState extends State<_PathItem> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final path = widget.path;
+    final isCurrent = widget.isCurrent;
+    final isLast = widget.isLast;
+
     final icon = path.isWalking ? Icons.directions_walk
         : path.isSubway ? Icons.subway_outlined
         : Icons.directions_bus_outlined;
@@ -1414,54 +1504,132 @@ class _PathItem extends StatelessWidget {
         : path.isSubway ? Colors.blue.withValues(alpha: 0.4)
         : Colors.green.withValues(alpha: 0.4);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 36,
-          child: Column(
-            children: [
-              Container(
-                width: 32, height: 32,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: isCurrent ? color : color.withValues(alpha: 0.12),
-                  border: isCurrent ? Border.all(color: color, width: 2) : null,
-                ),
-                child: Icon(icon, size: 16, color: isCurrent ? Colors.white : color),
-              ),
-              if (!isLast)
-                Container(
-                  width: 2, height: 36,
-                  margin: const EdgeInsets.symmetric(vertical: 3),
-                  decoration: path.isWalking
-                      ? BoxDecoration(color: Colors.transparent, border: Border(left: BorderSide(color: lineColor, width: 2)))
-                      : BoxDecoration(color: lineColor),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(bottom: isLast ? 0 : 20, top: 4),
+    return Container(
+      decoration: isCurrent
+          ? BoxDecoration(
+              color: color.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: color.withValues(alpha: 0.3)),
+            )
+          : null,
+      padding: isCurrent ? const EdgeInsets.symmetric(horizontal: 6, vertical: 4) : EdgeInsets.zero,
+      margin: isCurrent ? const EdgeInsets.symmetric(vertical: 2) : EdgeInsets.zero,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 36,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('${path.start ?? ''} → ${path.end ?? ''}',
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-                const SizedBox(height: 2),
-                Text(
-                  '${path.sectionTime}분'
-                  '${path.stationCount != null ? ' · ${path.stationCount}정거장' : ''}'
-                  '${path.way != null ? ' · ${path.way}' : ''}',
-                  style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                Container(
+                  width: 32, height: 32,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isCurrent ? color : color.withValues(alpha: 0.12),
+                    border: isCurrent ? Border.all(color: color, width: 2) : null,
+                  ),
+                  child: Icon(icon, size: 16, color: isCurrent ? Colors.white : color),
                 ),
+                if (!isLast)
+                  Container(
+                    width: 2, height: 36,
+                    margin: const EdgeInsets.symmetric(vertical: 3),
+                    decoration: path.isWalking
+                        ? BoxDecoration(color: Colors.transparent, border: Border(left: BorderSide(color: lineColor, width: 2, style: BorderStyle.solid)))
+                        : BoxDecoration(color: lineColor),
+                  ),
               ],
             ),
           ),
-        ),
-      ],
+          const SizedBox(width: 10),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: isLast ? 0 : 20, top: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 현재 구간 배지
+                  if (isCurrent) ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4)),
+                      child: const Text('현재 구간',
+                          style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+                    ),
+                  ],
+                  // 출발/도착 정류장
+                  Text(
+                    (path.start != null && path.end != null)
+                        ? '${path.start} → ${path.end}'
+                        : path.typeLabel,
+                    style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600,
+                      color: isCurrent ? color : AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  // 노선 번호 칩
+                  if (!path.isWalking && path.no.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(top: 2, bottom: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        path.isSubway
+                            ? '${path.no.first}호선${path.way != null ? " (${path.way})" : ""}'
+                            : '${path.no.first}번',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color),
+                      ),
+                    ),
+                  Text(
+                    '${path.sectionTime}분'
+                    '${path.stationCount != null ? ' · ${path.stationCount}정거장' : ''}',
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                  ),
+                  // 정거장 상세 펼치기 (버스/지하철만)
+                  if (!path.isWalking && path.stationName.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    GestureDetector(
+                      onTap: () => setState(() => _expanded = !_expanded),
+                      child: Row(
+                        children: [
+                          Text(
+                            _expanded ? '정류장 접기' : '정류장 ${path.stationName.length}개 보기',
+                            style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w500),
+                          ),
+                          Icon(_expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                              size: 14, color: color),
+                        ],
+                      ),
+                    ),
+                    if (_expanded) ...[
+                      const SizedBox(height: 6),
+                      ...path.stationName.map((station) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 6, height: 6,
+                              decoration: BoxDecoration(shape: BoxShape.circle, color: color.withValues(alpha: 0.5)),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(station,
+                                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                          ],
+                        ),
+                      )),
+                    ],
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

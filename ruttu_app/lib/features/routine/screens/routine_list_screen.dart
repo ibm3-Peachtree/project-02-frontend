@@ -307,7 +307,7 @@ class _RoutineCard extends StatelessWidget {
                   ),
                   const Spacer(),
                   Text(
-                    '출발 ${routine.recommendedDepartureTime}',
+                    '권장 출발 시간: ${routine.recommendedDepartureTime}',
                     style: const TextStyle(
                         fontSize: 13,
                         color: AppColors.primary,

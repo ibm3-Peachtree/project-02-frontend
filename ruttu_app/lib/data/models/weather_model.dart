@@ -5,7 +5,7 @@ class WeatherModel {
   final int tmp;        // 기온 (°C)
   final String wsd;    // 풍속
   final String sky;    // 하늘 상태
-  final String pty;    // 강수 형태
+  final String? pty;   // 강수 형태 (백엔드 WeatherDto에 없을 수 있음)
   final int pop;       // 강수 확률 (%)
   final String pcp;    // 1시간 강수량
   final int reh;       // 습도 (%)
@@ -16,7 +16,7 @@ class WeatherModel {
     required this.tmp,
     required this.wsd,
     required this.sky,
-    required this.pty,
+    this.pty,
     required this.pop,
     required this.pcp,
     required this.reh,
@@ -24,15 +24,15 @@ class WeatherModel {
   });
 
   factory WeatherModel.fromJson(Map<String, dynamic> json) => WeatherModel(
-        dateTime: json['dateTime'] as String,
-        tmp:  json['tmp']  as int,
-        wsd:  json['wsd']  as String,
-        sky:  json['sky']  as String,
-        pty:  json['pty']  as String,
-        pop:  json['pop']  as int,
-        pcp:  json['pcp']  as String,
-        reh:  json['reh']  as int,
-        sno:  json['sno']  as String,
+        dateTime: (json['dateTime'] ?? '').toString(),
+        tmp:  (json['tmp']  as num?)?.toInt() ?? 0,
+        wsd:  (json['wsd']  ?? '').toString(),
+        sky:  (json['sky']  ?? '1').toString(),
+        pty:  json['pty']  as String?,
+        pop:  (json['pop']  as num?)?.toInt() ?? 0,
+        pcp:  (json['pcp']  ?? '없음').toString(),
+        reh:  (json['reh']  as num?)?.toInt() ?? 0,
+        sno:  (json['sno']  ?? '없음').toString(),
       );
 }
 
@@ -44,8 +44,8 @@ class AirQualityRegionModel {
 
   factory AirQualityRegionModel.fromJson(Map<String, dynamic> json) =>
       AirQualityRegionModel(
-        seoul:    json['seoul']    as String,
-        gyeonggi: json['gyeonggi'] as String,
+        seoul:    (json['seoul']    ?? '').toString(),
+        gyeonggi: (json['gyeonggi'] ?? '').toString(),
       );
 }
 
@@ -64,21 +64,35 @@ class AirQualityModel {
 
 class WeatherAirQualityModel {
   final List<WeatherModel> weather;
-  final AirQualityModel airQuality;
+  final AirQualityModel? airQuality;
 
   const WeatherAirQualityModel({
     required this.weather,
-    required this.airQuality,
+    this.airQuality,
   });
 
-  factory WeatherAirQualityModel.fromJson(Map<String, dynamic> json) =>
-      WeatherAirQualityModel(
-        weather: (json['weather'] as List<dynamic>)
-            .map((e) => WeatherModel.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        airQuality: AirQualityModel.fromJson(
-            json['airQuality'] as Map<String, dynamic>),
-      );
+  // 백엔드는 airQuality를 List<AirQualityDto>로 내림 → 첫 번째 항목 사용
+  factory WeatherAirQualityModel.fromJson(Map<String, dynamic> json) {
+    final weatherList = (json['weather'] as List<dynamic>?)
+            ?.map((e) => WeatherModel.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        [];
+
+    AirQualityModel? airQuality;
+    final aqRaw = json['airQuality'];
+    if (aqRaw is List && aqRaw.isNotEmpty) {
+      // 백엔드: List<AirQualityDto>
+      airQuality = AirQualityModel.fromJson(aqRaw.first as Map<String, dynamic>);
+    } else if (aqRaw is Map<String, dynamic>) {
+      // 단일 객체인 경우도 허용 (이전 mock 호환)
+      airQuality = AirQualityModel.fromJson(aqRaw);
+    }
+
+    return WeatherAirQualityModel(
+      weather: weatherList,
+      airQuality: airQuality,
+    );
+  }
 
   /// 현재 날씨 (첫 번째 항목)
   WeatherModel? get current => weather.isNotEmpty ? weather.first : null;
@@ -98,5 +112,5 @@ class WeatherAirQualityModel {
   }
 
   /// 미세먼지(PM10) 서울 등급 라벨
-  String get pm10Label => airQuality.pm10.seoul;
+  String get pm10Label => airQuality?.pm10.seoul ?? '—';
 }

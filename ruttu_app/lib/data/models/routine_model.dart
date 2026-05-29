@@ -1,14 +1,17 @@
-// GET /routines 목록 응답
+import 'route_model.dart';
+
+// GET /me/routines 목록 및 GET /me/routines/{id} 상세 응답
 class RoutineModel {
   final int routineId;
   final String routineName;
   final String departureAddressName;
   final String arrivalAddressName;
-  final String targetArrivalTime;       // "HH:mm"
+  final String targetArrivalTime;        // "HH:mm"
   final String recommendedDepartureTime; // "HH:mm"
-  final int estimatedDuration;           // 분 (명세 오타: estimateDuration/estimatedDuration 혼용)
+  final int estimatedDuration;           // 분
   final List<String> days;               // ["MON","TUE",...]
   final bool isActive;
+  final RouteModel? route;               // 상세 조회 시에만 포함 (RoutineDetailDto.route)
 
   const RoutineModel({
     required this.routineId,
@@ -20,23 +23,31 @@ class RoutineModel {
     required this.estimatedDuration,
     required this.days,
     this.isActive = true,
+    this.route,
   });
 
   factory RoutineModel.fromJson(Map<String, dynamic> json) => RoutineModel(
         routineId: (json['routineId'] as num).toInt(),
         routineName: json['routineName'] as String,
         departureAddressName: json['originAlias'] as String? ??
-            json['departureAddressName'] as String,
+            json['departureAddressName'] as String? ?? '',
         arrivalAddressName: json['destinationAlias'] as String? ??
-            json['arrivalAddressName'] as String,
+            json['arrivalAddressName'] as String? ?? '',
         targetArrivalTime: _formatTime(json['targetArrivalTime']),
-        recommendedDepartureTime: _formatTime(json['recommendedDepartureTime']),
+        recommendedDepartureTime: json['recommendedDepartureTime'] != null
+            ? _formatTime(json['recommendedDepartureTime'])
+            : '--:--',
         estimatedDuration:
-            (json['estimatedDuration'] ?? json['estimateDuration'] ?? 0) as int,
+            (json['estimatedDuration'] ?? json['estimateDuration'] ?? 0) is int
+                ? (json['estimatedDuration'] ?? json['estimateDuration'] ?? 0) as int
+                : ((json['estimatedDuration'] ?? json['estimateDuration'] ?? 0) as num).toInt(),
         days: json['dow'] != null
             ? _dowToDays((json['dow'] as List<dynamic>))
-            : (json['days'] as List<dynamic>).cast<String>(),
+            : ((json['days'] as List<dynamic>?)?.cast<String>() ?? const []),
         isActive: json['isActive'] as bool? ?? true,
+        route: json['route'] != null
+            ? RouteModel.fromJson(json['route'] as Map<String, dynamic>)
+            : null,
       );
 
   static String _formatTime(dynamic value) {

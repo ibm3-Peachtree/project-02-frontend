@@ -35,12 +35,12 @@ class PathModel {
   }
 
   factory PathModel.fromJson(Map<String, dynamic> json) => PathModel(
-        type:         json['type']         as String,
-        sectionTime:  json['sectionTime']  as int,
+        type:         (json['type']        as String?) ?? 'walk',
+        sectionTime:  (json['sectionTime'] as num?)?.toInt() ?? 0,
         no:           (json['no'] as List<dynamic>?)?.cast<String>() ?? const [],
         start:        json['start']        as String?,
         end:          json['end']          as String?,
-        stationCount: json['stationCount'] as int?,
+        stationCount: (json['stationCount'] as num?)?.toInt(),
         stationName:  (json['stationName'] as List<dynamic>?)?.cast<String>() ?? const [],
         way:          json['way']          as String?,
       );
@@ -86,12 +86,12 @@ class RouteModel {
     }
 
     return RouteModel(
-      recoId:        (json['recoId'] as num).toInt(),
-      totalDistance: json['totalDistance'] as int? ?? 0,
-      totalTime:     json['totalTime']     as int,
-      payment:       json['payment']       as int,
-      startName:     json['startName']     as String?,
-      endName:       json['endName']       as String?,
+      recoId:        (json['recoId'] as num?)?.toInt() ?? 0,
+      totalDistance: (json['totalDistance'] as num?)?.toInt() ?? 0,
+      totalTime:     (json['totalTime']     as num).toInt(),
+      payment:       (json['payment']       as num).toInt(),
+      startName:     json['startName']      as String?,
+      endName:       json['endName']        as String?,
       path: (json['path'] as List<dynamic>?)
               ?.map((e) => PathModel.fromJson(e as Map<String, dynamic>))
               .toList() ??
@@ -103,10 +103,10 @@ class RouteModel {
   factory RouteModel._fromListDto(Map<String, dynamic> json) {
     final types = (json['trafficType'] as List<dynamic>).cast<String>();
     return RouteModel(
-      recoId:        (json['recoId'] as num).toInt(),
+      recoId:        (json['recoId'] as num?)?.toInt() ?? 0,
       totalDistance: 0,
-      totalTime:     json['totalTime'] as int,
-      payment:       json['payment']   as int,
+      totalTime:     (json['totalTime'] as num).toInt(),
+      payment:       (json['payment']   as num).toInt(),
       path:          types.map(_pathFromType).toList(),
     );
   }
@@ -143,17 +143,95 @@ class RouteModel {
       };
 }
 
-// GET /me/routines/active/status 응답
+// GET /me/routines/active/status 응답 (CurrentLocationDto)
 class LiveStatusModel {
-  final String status;   // "도보 중" | "대기 중" | "탑승 중"
-  final int updatedAt;   // Unix timestamp (Long)
+  final String status;   // "대기중" | "도보중" | "탑승중"
+  final int updatedAt;   // Unix timestamp millis (Long)
 
   const LiveStatusModel({required this.status, required this.updatedAt});
 
   factory LiveStatusModel.fromJson(Map<String, dynamic> json) =>
       LiveStatusModel(
         status:    json['status']    as String,
-        updatedAt: json['updatedAt'] as int,
+        updatedAt: (json['updatedAt'] as num).toInt(),
+      );
+}
+
+// GET /me/routines/active/route  &  /me/routines/active/reco 응답 (LiveRouteDto)
+class LiveRouteModel {
+  final int totalDistance;
+  final int totalTime;
+  final int payment;
+  final String? startName;
+  final String? endName;
+  final List<PathModel> path;
+
+  const LiveRouteModel({
+    required this.totalDistance,
+    required this.totalTime,
+    required this.payment,
+    this.startName,
+    this.endName,
+    required this.path,
+  });
+
+  factory LiveRouteModel.fromJson(Map<String, dynamic> json) => LiveRouteModel(
+        totalDistance: (json['totalDistance'] as num?)?.toInt() ?? 0,
+        totalTime:     (json['totalTime']     as num).toInt(),
+        payment:       (json['payment']       as num).toInt(),
+        startName:     json['startName']      as String?,
+        endName:       json['endName']        as String?,
+        path: (json['path'] as List<dynamic>?)
+                ?.map((e) => PathModel.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
+      );
+
+  Map<String, dynamic> toJson() => {
+        'totalDistance': totalDistance,
+        'totalTime':     totalTime,
+        'payment':       payment,
+        'startName':     startName,
+        'endName':       endName,
+        'path':          path.map((e) => e.toJson()).toList(),
+      };
+}
+
+// GET /me/routines/active/location 응답 — RouteXYDto 단일 좌표 포인트
+class RouteXYModel {
+  final double? x;    // 경도 (longitude)
+  final double? y;    // 위도 (latitude)
+  final String? type; // "walk" | "bus" | "subway"
+
+  const RouteXYModel({this.x, this.y, this.type});
+
+  factory RouteXYModel.fromJson(Map<String, dynamic> json) => RouteXYModel(
+        x:    (json['x'] as num?)?.toDouble(),
+        y:    (json['y'] as num?)?.toDouble(),
+        type: json['type'] as String?,
+      );
+}
+
+// GET /me/routines/active/location 응답 (CurrentSectionDto)
+class CurrentSectionModel {
+  final int idx;              // 현재 위치 구간 인덱스 (0-based)
+  final List<String> section; // 전체 구간 타입 목록 ("walk" | "bus" | "subway")
+  final List<RouteXYModel> xy; // 전체 경로 좌표 포인트 목록
+
+  const CurrentSectionModel({
+    required this.idx,
+    required this.section,
+    this.xy = const [],
+  });
+
+  factory CurrentSectionModel.fromJson(Map<String, dynamic> json) =>
+      CurrentSectionModel(
+        idx:     (json['idx'] as num).toInt(),
+        section: (json['section'] as List<dynamic>).cast<String>(),
+        xy: (json['xy'] as List<dynamic>?)
+                ?.map((e) => RouteXYModel.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
       );
 }
 
