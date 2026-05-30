@@ -1,6 +1,6 @@
 import '../../../data/models/user_model.dart';
 
-enum AuthStatus { unknown, unauthenticated, needsNickname, authenticated }
+enum AuthStatus { unknown, unauthenticated, needsNickname, needsOnboarding, authenticated }
 
 class AuthState {
   final AuthStatus status;

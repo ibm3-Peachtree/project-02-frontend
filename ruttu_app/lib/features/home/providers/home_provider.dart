@@ -43,21 +43,71 @@ class HomeNotifier extends StateNotifier<HomeState> {
       }
 
       final today = _todayKey();
+      final hasTodayRoutine = routines.any((r) => r.isActive && r.days.contains(today));
+
+      if (!hasTodayRoutine) {
+        state = HomeState(
+          status: HomeStatus.noTodayRoutine,
+          weather: weather,
+          // 루틴 목록은 state에 없으므로 activeRoutine만 null로 둠
+        );
+        return;
+      }
+
       final todayRoutine = routines.firstWhere(
         (r) => r.isActive && r.days.contains(today),
-        orElse: () => routines.first,
       );
 
-      LiveRouteModel? myRoute;
+      // preActive 상태에서는 루틴 상세의 route 데이터를 사용
+      // active 엔드포인트(/me/routines/active/*)는 출발 후에만 유효하므로 여기서 호출하지 않음
+      RoutineModel todayRoutineDetail = todayRoutine;
       try {
-        myRoute = await _repository.getMyRoute();
+        todayRoutineDetail = await _repository.getRoutineDetail(todayRoutine.routineId);
       } catch (_) {}
+
+      // 루틴 상세의 route → LiveRouteModel로 변환
+      LiveRouteModel? myRoute;
+      final routeData = todayRoutineDetail.route;
+      if (routeData != null) {
+        myRoute = LiveRouteModel(
+          totalDistance: routeData.totalDistance,
+          totalTime: routeData.totalTime,
+          payment: routeData.payment,
+          startName: routeData.startName,
+          endName: routeData.endName,
+          path: routeData.path,
+        );
+      }
+
+      // preActive 추천 경로: recoId 기반으로 조회, 실패 시 myRoute와 동일하게 표시
+      LiveRouteModel? recommendedRoute;
+      final recoId = routeData?.recoId;
+      if (recoId != null && recoId > 0) {
+        try {
+          final recoDetail = await _repository.getRouteDetail(recoId);
+          recommendedRoute = LiveRouteModel(
+            totalDistance: recoDetail.totalDistance,
+            totalTime: recoDetail.totalTime,
+            payment: recoDetail.payment,
+            startName: recoDetail.startName,
+            endName: recoDetail.endName,
+            path: recoDetail.path,
+          );
+        } catch (e) {
+          debugPrint('[initialize] getRouteDetail 실패, myRoute로 fallback: $e');
+          recommendedRoute = myRoute; // 조회 실패 시 내 경로와 동일하게 표시
+        }
+      } else {
+        // recoId 없음 → 내 경로를 추천 경로로도 표시
+        recommendedRoute = myRoute;
+      }
 
       state = HomeState(
         status: HomeStatus.preActive,
-        activeRoutine: todayRoutine,
+        activeRoutine: todayRoutineDetail,
         weather: weather,
         myRoute: myRoute,
+        recommendedRoute: recommendedRoute,
       );
     } catch (e) {
       debugPrint('❌ initialize 실패: $e');
@@ -68,31 +118,54 @@ class HomeNotifier extends StateNotifier<HomeState> {
   Future<void> startRoute() async {
     if (state.activeRoutine == null) return;
     state = state.copyWith(isLoading: true);
+
+    // 각 API를 독립적으로 호출 — 하나 실패해도 나머지는 계속 진행
+    LiveRouteModel? route;
     try {
-      // 내 경로 + 추천 경로 + 현재 구간(xy 포함) + 현재 상태 한 번에 초기 로드
-      final route = await _repository.getMyRoute();
-      final recoRoute = await _repository.getRecommendedRoute();
-      final section = await _repository.getCurrentSection();
-      final liveStatus = await _repository.getLiveStatus();
-
-      final stepIndex = section?.idx ?? 0;
-
-      state = state.copyWith(
-        status: HomeStatus.active,
-        myRoute: route,
-        recommendedRoute: recoRoute,
-        isLoading: false,
-        currentStepIndex: stepIndex,
-        stepRemainingMinutes: _remainingMinutes(route, stepIndex),
-        liveStatus: liveStatus,
-        // xy 좌표 저장 → 지도 폴리라인에 사용
-        routeCoordinates: section?.xy ?? const [],
-      );
-
-      _startPolling();
-    } catch (_) {
-      state = state.copyWith(isLoading: false);
+      route = await _repository.getMyRoute();
+    } catch (e) {
+      debugPrint('[startRoute] getMyRoute 실패: $e');
+      route = state.myRoute; // preActive에서 로드한 경로 재사용
     }
+
+    LiveRouteModel? recoRoute;
+    try {
+      recoRoute = await _repository.getRecommendedRoute();
+    } catch (e) {
+      debugPrint('[startRoute] getRecommendedRoute 실패: $e');
+      recoRoute = state.recommendedRoute ?? route; // 실패 시 내 경로로 fallback
+    }
+
+    CurrentSectionModel? section;
+    try {
+      section = await _repository.getCurrentSection();
+    } catch (e) {
+      debugPrint('[startRoute] getCurrentSection 실패 (무시됨): $e');
+    }
+
+    LiveStatusModel? liveStatus;
+    try {
+      liveStatus = await _repository.getLiveStatus();
+    } catch (e) {
+      debugPrint('[startRoute] getLiveStatus 실패 (무시됨): $e');
+    }
+
+    final stepIndex = section?.idx ?? 0;
+
+    // route가 없어도 active 상태로 전환 (경로 없이도 이동 시작 가능)
+    state = state.copyWith(
+      status: HomeStatus.active,
+      myRoute: route,
+      recommendedRoute: recoRoute,
+      isLoading: false,
+      currentStepIndex: stepIndex,
+      stepRemainingMinutes: route != null ? _remainingMinutes(route, stepIndex) : 0,
+      liveStatus: liveStatus,
+      routeCoordinates: section?.xy ?? const [],
+      departureTime: DateTime.now(),
+    );
+
+    _startPolling();
   }
 
   /// 백엔드를 주기적으로 폴링하여 상태를 갱신합니다.
@@ -164,6 +237,23 @@ class HomeNotifier extends StateNotifier<HomeState> {
     if (state.status != HomeStatus.active) return;
     _liveTimer?.cancel();
     _liveTimer = null;
+
+    final routineId = state.activeRoutine?.routineId;
+    final departure = state.departureTime;
+    final arrival = DateTime.now();
+
+    if (routineId != null && departure != null) {
+      try {
+        await _repository.completeRoutine(
+          departureTime: departure,
+          arrivalTime: arrival,
+        );
+        debugPrint('[arriveByGps] 루틴 완료 전송 성공');
+      } catch (e) {
+        debugPrint('[arriveByGps] 루틴 완료 전송 실패 (무시됨): $e');
+      }
+    }
+
     state = HomeState(
       status: HomeStatus.preActive,
       activeRoutine: state.activeRoutine,
@@ -178,11 +268,55 @@ class HomeNotifier extends StateNotifier<HomeState> {
   Future<void> stopRoute() async {
     _liveTimer?.cancel();
     _liveTimer = null;
+
+    final routineId = state.activeRoutine?.routineId;
+    final departure = state.departureTime;
+    final arrival = DateTime.now();
+
+    if (routineId != null && departure != null) {
+      try {
+        await _repository.completeRoutine(
+          departureTime: departure,
+          arrivalTime: arrival,
+        );
+        debugPrint('[stopRoute] 루틴 완료 전송 성공');
+      } catch (e) {
+        debugPrint('[stopRoute] 루틴 완료 전송 실패 (무시됨): $e');
+      }
+    }
+
     state = HomeState(
       status: HomeStatus.preActive,
       activeRoutine: state.activeRoutine,
       weather: state.weather,
     );
+  }
+
+  /// 피드백 모달에서 직접 호출 — 점수 포함 루틴 완료 전송
+  Future<void> completeRoutine({
+    required DateTime departureTime,
+    required DateTime arrivalTime,
+    int? satWaitTimeScore,
+    int? satEtaScore,
+    int? satRouteScore,
+  }) async {
+    try {
+      await _repository.completeRoutine(
+        departureTime: departureTime,
+        arrivalTime: arrivalTime,
+        satWaitTimeScore: satWaitTimeScore,
+        satEtaScore: satEtaScore,
+        satRouteScore: satRouteScore,
+      );
+      debugPrint('[completeRoutine] 루틴 완료 전송 성공');
+    } catch (e) {
+      debugPrint('[completeRoutine] 루틴 완료 전송 실패 (무시됨): $e');
+    }
+  }
+
+  /// 루틴 생성/수정 후 경로 데이터 재조회 (추천 경로 0개 문제 해결)
+  Future<void> refresh() async {
+    await initialize();
   }
 
   /// 추천 경로를 내 경로로 채택 (세 번째 화면 "이 경로로 변경" 버튼)

@@ -68,21 +68,14 @@ class ApiClient {
             }
           }
 
-          // 403 → 실제 인증 만료인지 확인 후에만 로그아웃
-          // (루틴 저장 권한 오류 등 일반 403은 로그아웃 하지 않음)
-          if (statusCode == 403) {
-            final data = error.response?.data;
-            final msg = (data is Map ? (data['message'] ?? data['error'] ?? '') : data ?? '').toString();
-            final isAuthError = msg.contains('expired') ||
-                msg.contains('invalid') ||
-                msg.contains('Unauthorized') ||
-                msg.contains('토큰') ||
-                error.requestOptions.path.contains('/auth/');
-            if (isAuthError) {
-              await _tokenStorage.clearTokens();
-              onSessionExpired?.call();
-            }
-            // 일반 403은 그냥 에러로 흘려보내 화면에서 처리
+          // 403 → /auth/ 경로일 때만 세션 만료 처리
+          // 그 외 403(active 루틴 없음, 권한 없음 등)은 비즈니스 오류이므로 그냥 흘려보냄
+          // ⚠️ 여기서 retry하면 무한 루프 발생하므로 절대 retry 하지 않음
+          if (statusCode == 403 &&
+              error.requestOptions.path.contains('/auth/') &&
+              !error.requestOptions.path.contains('/auth/logout')) {
+            await _tokenStorage.clearTokens();
+            onSessionExpired?.call();
           }
 
           handler.next(error);

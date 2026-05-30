@@ -22,11 +22,7 @@ class NotificationSettings {
   final bool ttsEnabled;           // TTS 안내
   final String ttsMode;            // '매 단계마다' | '환승 시에만' | '출발·도착만'
   final bool briefingAlert;        // 브리핑 알림
-  final String briefingTiming;     // '당일 아침' | '전날 저녁' | '둘 다'
   final String morningTime;        // 'HH:mm'
-  final String eveningTime;        // 'HH:mm'
-  final String briefingDays;       // '평일만' | '매일'
-  final String briefingFormat;     // '텍스트' | '음성'
 
   const NotificationSettings({
     this.departureAlert = false,
@@ -37,11 +33,7 @@ class NotificationSettings {
     this.ttsEnabled = false,
     this.ttsMode = '매 단계마다',
     this.briefingAlert = false,
-    this.briefingTiming = '당일 아침',
     this.morningTime = '07:30',
-    this.eveningTime = '22:00',
-    this.briefingDays = '평일만',
-    this.briefingFormat = '텍스트',
   });
 
   NotificationSettings copyWith({
@@ -53,11 +45,7 @@ class NotificationSettings {
     bool? ttsEnabled,
     String? ttsMode,
     bool? briefingAlert,
-    String? briefingTiming,
     String? morningTime,
-    String? eveningTime,
-    String? briefingDays,
-    String? briefingFormat,
   }) => NotificationSettings(
     departureAlert: departureAlert ?? this.departureAlert,
     departureMinutes: departureMinutes ?? this.departureMinutes,
@@ -67,11 +55,7 @@ class NotificationSettings {
     ttsEnabled: ttsEnabled ?? this.ttsEnabled,
     ttsMode: ttsMode ?? this.ttsMode,
     briefingAlert: briefingAlert ?? this.briefingAlert,
-    briefingTiming: briefingTiming ?? this.briefingTiming,
     morningTime: morningTime ?? this.morningTime,
-    eveningTime: eveningTime ?? this.eveningTime,
-    briefingDays: briefingDays ?? this.briefingDays,
-    briefingFormat: briefingFormat ?? this.briefingFormat,
   );
 
   /// '10분 전' → 10
@@ -178,48 +162,23 @@ class AppNotificationService {
   }
 
   // ── 브리핑 알림 스케줄링 ──────────────────────────────────────
-  /// [timing]: '당일 아침' | '전날 저녁' | '둘 다'
-  /// [days]: '평일만' | '매일'
   static Future<void> scheduleBriefingAlerts({
-    required String timing,
     required String morningTime,
-    required String eveningTime,
-    required String days,
   }) async {
     await _plugin.cancel(_briefingMorningId);
     await _plugin.cancel(_briefingEveningId);
 
-    final matchDay = days == '매일'
-        ? null // 매일
-        : [1, 2, 3, 4, 5]; // 평일(월~금) weekday numbers
-
-    if (timing == '당일 아침' || timing == '둘 다') {
-      final t = _parseTime(morningTime);
-      await _scheduleDaily(
-        id: _briefingMorningId,
-        title: '아침 브리핑',
-        body: '오늘의 날씨·교통·출발 시간을 확인해보세요 ☀️',
-        channelId: 'briefing_morning',
-        channelName: '아침 브리핑 알림',
-        hour: t.$1,
-        minute: t.$2,
-        allowedWeekdays: matchDay,
-      );
-    }
-
-    if (timing == '전날 저녁' || timing == '둘 다') {
-      final t = _parseTime(eveningTime);
-      await _scheduleDaily(
-        id: _briefingEveningId,
-        title: '저녁 브리핑',
-        body: '내일 날씨 예보와 일정을 미리 확인해보세요 🌙',
-        channelId: 'briefing_evening',
-        channelName: '저녁 브리핑 알림',
-        hour: t.$1,
-        minute: t.$2,
-        allowedWeekdays: matchDay,
-      );
-    }
+    final t = _parseTime(morningTime);
+    await _scheduleDaily(
+      id: _briefingMorningId,
+      title: '아침 브리핑',
+      body: '오늘의 날씨·교통·출발 시간을 확인해보세요 ☀️',
+      channelId: 'briefing_morning',
+      channelName: '아침 브리핑 알림',
+      hour: t.$1,
+      minute: t.$2,
+      allowedWeekdays: null,
+    );
   }
 
   static Future<void> cancelBriefingAlerts() async {
@@ -330,7 +289,7 @@ class AppNotificationService {
       scheduled = scheduled.add(const Duration(days: 1));
     }
 
-    // 평일만이면 해당 요일까지 앞으로 당김
+    // 지정 요일까지 날짜를 앞으로 당김
     if (allowedWeekdays != null) {
       while (!allowedWeekdays.contains(scheduled.weekday)) {
         scheduled = scheduled.add(const Duration(days: 1));
@@ -439,10 +398,7 @@ class _NotificationSettingsScreenState
 
   Future<void> _rescheduleBriefingAlerts(NotificationSettings s) async {
     await AppNotificationService.scheduleBriefingAlerts(
-      timing: s.briefingTiming,
       morningTime: s.morningTime,
-      eveningTime: s.eveningTime,
-      days: s.briefingDays,
     );
   }
 
@@ -554,115 +510,25 @@ class _NotificationSettingsScreenState
                   icon: Icons.article_outlined,
                   emoji: '📋',
                   title: '브리핑 알림',
-                  description: '날씨·교통 브리핑을 원하는 시점에 받아요',
+                  description: '매일 아침 날씨, 교통 브리핑을 원하는 시간에 받아요',
                   value: s.briefingAlert,
                   onChanged: (v) => _onBriefingAlertChanged(v, s),
                 ),
                 if (s.briefingAlert) ...[
                   const Divider(height: 1),
-                  // ① 브리핑 시점
-                  _CardSubRow(
-                    label: '브리핑 시점',
-                    child: _ChipRow(
-                      chips: ['당일 아침', '전날 저녁', '둘 다'],
-                      selected: s.briefingTiming,
-                      onSelected: (v) {
-                        ref
-                            .read(notificationSettingsProvider.notifier)
-                            .update((old) => old.copyWith(briefingTiming: v));
-                        _rescheduleBriefingAlerts(s.copyWith(briefingTiming: v));
-                      },
-                    ),
-                  ),
-                  // ② 시간 설정 — 시점에 따라 노출
-                  if (s.briefingTiming == '당일 아침' ||
-                      s.briefingTiming == '둘 다') ...[
-                    const Divider(height: 1, indent: 16),
-                    _BriefingTimeRow(
-                      label: '아침 브리핑',
-                      description: '실시간 날씨 · 교통 이슈 · 출발 시간 안내',
-                      time: s.morningTime,
-                      initialHour: 7,
-                      initialMinute: 30,
-                      onChanged: (t) {
-                        ref
-                            .read(notificationSettingsProvider.notifier)
-                            .update((old) => old.copyWith(morningTime: t));
-                        _rescheduleBriefingAlerts(s.copyWith(morningTime: t));
-                      },
-                    ),
-                  ],
-                  if (s.briefingTiming == '전날 저녁' ||
-                      s.briefingTiming == '둘 다') ...[
-                    const Divider(height: 1, indent: 16),
-                    _BriefingTimeRow(
-                      label: '저녁 브리핑',
-                      description: '내일 날씨 예보 · 내일 일정 · 루틴 확인',
-                      time: s.eveningTime,
-                      initialHour: 22,
-                      initialMinute: 0,
-                      onChanged: (t) {
-                        ref
-                            .read(notificationSettingsProvider.notifier)
-                            .update((old) => old.copyWith(eveningTime: t));
-                        _rescheduleBriefingAlerts(s.copyWith(eveningTime: t));
-                      },
-                    ),
-                  ],
-                  // ③+④ 알림 요일 + 브리핑 형식
-                  const Divider(height: 1, indent: 16),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('알림 요일',
-                                  style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                      color: AppColors.textSecondary)),
-                              const SizedBox(height: 8),
-                              _ChipRow(
-                                chips: ['평일만', '매일'],
-                                selected: s.briefingDays,
-                                onSelected: (v) {
-                                  ref
-                                      .read(notificationSettingsProvider.notifier)
-                                      .update((old) => old.copyWith(briefingDays: v));
-                                  _rescheduleBriefingAlerts(s.copyWith(briefingDays: v));
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('브리핑 형식',
-                                  style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                      color: AppColors.textSecondary)),
-                              const SizedBox(height: 8),
-                              _ChipRow(
-                                chips: ['텍스트', '음성'],
-                                selected: s.briefingFormat,
-                                onSelected: (v) => ref
-                                    .read(notificationSettingsProvider.notifier)
-                                    .update((old) => old.copyWith(briefingFormat: v)),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                  // 아침 브리핑 시간
+                  _BriefingTimeRow(
+                    label: '아침 브리핑',
+                    description: '실시간 날씨 · 교통 이슈 · 출발 시간 안내',
+                    time: s.morningTime,
+                    initialHour: 7,
+                    initialMinute: 30,
+                    onChanged: (t) {
+                      ref
+                          .read(notificationSettingsProvider.notifier)
+                          .update((old) => old.copyWith(morningTime: t));
+                      _rescheduleBriefingAlerts(s.copyWith(morningTime: t));
+                    },
                   ),
                 ],
               ],

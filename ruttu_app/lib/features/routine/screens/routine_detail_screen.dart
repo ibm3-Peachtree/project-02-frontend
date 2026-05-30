@@ -103,7 +103,49 @@ class _RoutineDetailBody extends ConsumerWidget {
             width: double.infinity,
             child: ElevatedButton(
               onPressed: () async {
-                // 홈 화면으로 이동 후 startRoute() 호출 → active 상태로 전환
+                // 오늘 요일 체크 — 이 루틴이 오늘 요일에 해당하는지 확인
+                const dayKeys = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+                const dayLabels = ['월', '화', '수', '목', '금', '토', '일'];
+                final todayIdx = DateTime.now().weekday - 1; // 0=월 ~ 6=일
+                final todayKey = dayKeys[todayIdx];
+                final todayLabel = dayLabels[todayIdx];
+
+                final isTodayRoutine = routine.days.contains(todayKey);
+
+                if (!isTodayRoutine) {
+                  // 오늘 루틴이 아닌 경우 안내 다이얼로그
+                  if (!context.mounted) return;
+                  await showDialog<void>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                      title: const Text('오늘은 이 루틴이 없어요',
+                          style: TextStyle(
+                              fontSize: 17, fontWeight: FontWeight.w700)),
+                      content: Text(
+                        '이 루틴은 ${routine.days.map((d) {
+                          const k = ['MON','TUE','WED','THU','FRI','SAT','SUN'];
+                          const l = ['월','화','수','목','금','토','일'];
+                          final i = k.indexOf(d);
+                          return i >= 0 ? '${l[i]}요일' : d;
+                        }).join(', ')}에만 진행돼요.\n\n오늘($todayLabel요일)은 출발할 수 없어요.',
+                        style: const TextStyle(
+                            fontSize: 14, color: AppColors.textSecondary),
+                      ),
+                      actions: [
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('확인'),
+                        ),
+                      ],
+                    ),
+                  );
+                  return;
+                }
+
+                // 오늘 루틴이면 홈 화면으로 이동 후 startRoute() 호출
+                if (!context.mounted) return;
                 context.go(RouteConstants.home);
                 await Future.delayed(const Duration(milliseconds: 300));
                 ref.read(homeProvider.notifier).startRoute();
@@ -411,15 +453,15 @@ class _PathStepItemState extends State<_PathStepItem> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: AppColors.textSecondary.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(6),
+                          color: const Color(0xFFE3F0FC),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
                           '${path.sectionTime}분',
                           style: const TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w700,
-                              color: AppColors.textSecondary),
+                              color: Color(0xFF1155CC)),
                         ),
                       ),
                     ],
@@ -436,7 +478,7 @@ class _PathStepItemState extends State<_PathStepItem> {
                       ),
                       child: Text(
                         path.isSubway
-                            ? '${path.no.first}호선 (${path.way ?? ''} 방향)'
+                            ? '${path.subwayLineName}${path.way != null && path.way!.isNotEmpty ? " (${path.way} 방향)" : ""}'
                             : '${path.no.first}번 버스',
                         style: TextStyle(
                           fontSize: 13,
@@ -451,31 +493,31 @@ class _PathStepItemState extends State<_PathStepItem> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: color.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(6),
+                          color: const Color(0xFFE3F0FC),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
                           '${path.sectionTime}분',
-                          style: TextStyle(
+                          style: const TextStyle(
                               fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                              color: color),
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF1155CC)),
                         ),
                       ),
-                      if (path.stationCount != null) ...[
+                      if (path.stationName.isNotEmpty) ...[
                         const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                           decoration: BoxDecoration(
-                            color: color.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(6),
+                            color: const Color(0xFFE6F4EA),
+                            borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(
-                            '${path.stationCount}정거장',
-                            style: TextStyle(
+                            path.stationCountLabel,
+                            style: const TextStyle(
                                 fontSize: 14,
-                                fontWeight: FontWeight.w800,
-                                color: color),
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF1E6B30)),
                           ),
                         ),
                       ],

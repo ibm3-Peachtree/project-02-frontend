@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/auth/screens/splash_screen.dart';
 import '../../features/auth/screens/nickname_setup_screen.dart';
+import '../../features/auth/screens/onboarding_screen.dart';
 import '../../features/home/screens/home_screen.dart';
 import '../../features/routine/screens/routine_list_screen.dart';
 import '../../features/routine/screens/routine_detail_screen.dart';
@@ -33,9 +34,10 @@ final routerProvider = Provider<GoRouter>((ref) {
   });
 
   // 세션 만료 시 토큰 삭제 후 로그인 화면으로 강제 이동
+  // ⚠️ signOut()은 API 호출을 다시 하므로 forceSignOut()으로 로컬만 정리
   ref.listen(sessionExpiredProvider, (_, expired) async {
     if (expired) {
-      await ref.read(authProvider.notifier).signOut();
+      await ref.read(authProvider.notifier).forceSignOut();
       ref.read(sessionExpiredProvider.notifier).state = false;
     }
   });
@@ -45,9 +47,10 @@ final routerProvider = Provider<GoRouter>((ref) {
     refreshListenable: authListenable,
     redirect: (context, state) {
       final auth = ref.read(authProvider);
-      final isOnSplash    = state.matchedLocation == RouteConstants.splash;
-      final isOnNickname  = state.matchedLocation == RouteConstants.nicknameSetup;
-      final isOnDeleted   = state.matchedLocation == RouteConstants.accountDeleted;
+      final isOnSplash      = state.matchedLocation == RouteConstants.splash;
+      final isOnNickname    = state.matchedLocation == RouteConstants.nicknameSetup;
+      final isOnOnboarding  = state.matchedLocation == RouteConstants.onboarding;
+      final isOnDeleted     = state.matchedLocation == RouteConstants.accountDeleted;
 
       // 탈퇴 완료 화면은 인증 상태 무관하게 항상 허용
       if (isOnDeleted) return null;
@@ -59,8 +62,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           return isOnSplash ? null : RouteConstants.splash;
         case AuthStatus.needsNickname:
           return isOnNickname ? null : RouteConstants.nicknameSetup;
+        case AuthStatus.needsOnboarding:
+          return isOnOnboarding ? null : RouteConstants.onboarding;
         case AuthStatus.authenticated:
-          if (isOnSplash || isOnNickname) return RouteConstants.home;
+          if (isOnSplash || isOnNickname || isOnOnboarding) return RouteConstants.home;
           return null;
       }
     },
@@ -72,6 +77,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: RouteConstants.nicknameSetup,
         builder: (context, state) => const NicknameSetupScreen(),
+      ),
+      GoRoute(
+        path: RouteConstants.onboarding,
+        builder: (context, state) => const OnboardingScreen(),
       ),
       // 루틴/커뮤니티 생성·상세는 ShellRoute 바깥 — 바텀 네비 없이 전체 화면으로 열림
       GoRoute(

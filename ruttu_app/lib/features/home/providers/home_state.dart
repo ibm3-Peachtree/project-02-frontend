@@ -2,7 +2,7 @@ import '../../../data/models/routine_model.dart';
 import '../../../data/models/route_model.dart';
 import '../../../data/models/weather_model.dart';
 
-enum HomeStatus { noRoutine, preActive, active }
+enum HomeStatus { noRoutine, noTodayRoutine, preActive, active }
 
 class HomeState {
   final HomeStatus status;
@@ -18,6 +18,9 @@ class HomeState {
   /// getCurrentSection()에서 내려온 xy 좌표 목록 → 지도에 경로 폴리라인으로 그림
   final List<RouteXYModel> routeCoordinates;
 
+  /// 경로 시작(출발) 시각 — completeRoutine 호출 시 departureTime으로 사용
+  final DateTime? departureTime;
+
   const HomeState({
     this.status = HomeStatus.noRoutine,
     this.isLoading = false,
@@ -30,6 +33,7 @@ class HomeState {
     this.currentStepIndex = 0,
     this.stepRemainingMinutes = 0,
     this.routeCoordinates = const [],
+    this.departureTime,
   });
 
   bool get isDepartureImminent {
@@ -56,6 +60,7 @@ class HomeState {
     int? currentStepIndex,
     int? stepRemainingMinutes,
     List<RouteXYModel>? routeCoordinates,
+    DateTime? departureTime,
   }) =>
       HomeState(
         status: status ?? this.status,
@@ -69,5 +74,6 @@ class HomeState {
         currentStepIndex: currentStepIndex ?? this.currentStepIndex,
         stepRemainingMinutes: stepRemainingMinutes ?? this.stepRemainingMinutes,
         routeCoordinates: routeCoordinates ?? this.routeCoordinates,
+        departureTime: departureTime ?? this.departureTime,
       );
 }

@@ -10,6 +10,7 @@ class LoginResponse {
   final int userId;
   final String email;
   final String nickname;
+  final bool isNew;
 
   const LoginResponse({
     required this.accessToken,
@@ -17,6 +18,7 @@ class LoginResponse {
     required this.userId,
     required this.email,
     required this.nickname,
+    this.isNew = false,
   });
 
   factory LoginResponse.fromJson(Map<String, dynamic> json) => LoginResponse(
@@ -25,6 +27,7 @@ class LoginResponse {
         userId: json['userId'] as int,
         email: json['email'] as String,
         nickname: json['nickname'] as String,
+        isNew: json['isNew'] as bool? ?? false,
       );
 }
 

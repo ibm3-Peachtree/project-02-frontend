@@ -28,10 +28,59 @@ class PathModel {
   bool get isSubway  => type == 'subway';
   bool get isBus     => type == 'bus';
 
+  /// 화면에 표시할 정거장 수.
+  /// stationCount(백엔드 값)가 있으면 우선 사용하고,
+  /// 없으면 stationName 목록 길이에서 1을 뺀 값 사용
+  /// (stationName에 start/end가 포함되어 있어 -1 처리).
+  int get displayStationCount {
+    if (stationCount != null && stationCount! > 0) return stationCount!;
+    return (stationName.length - 1).clamp(0, 9999);
+  }
+
+  String get stationCountLabel => '${displayStationCount}정거장';
+
   String get typeLabel {
     if (isWalking) return '도보';
     if (isSubway)  return '지하철';
     return '버스';
+  }
+
+  /// 지하철 노선 번호(no)를 사람이 읽을 수 있는 이름으로 변환
+  /// 백엔드가 내부 코드번호로 내려보낼 때 보정
+  static const _subwayLineNames = <String, String>{
+    '1': '1호선',
+    '2': '2호선',
+    '3': '3호선',
+    '4': '4호선',
+    '5': '5호선',
+    '6': '6호선',
+    '7': '7호선',
+    '8': '8호선',
+    '9': '9호선',
+    '21': '인천1호선',
+    '22': '인천2호선',
+    '100': '경의중앙선',
+    '101': '공항철도',
+    '102': '자기부상',
+    '103': '경춘선',
+    '104': '수인분당선',
+    '105': '신분당선',
+    '106': '의정부경전철',
+    '107': '에버라인',
+    '108': '경강선',
+    '109': '신분당선',   // 일부 API가 신분당선을 109로 반환
+    '110': '우이신설선',
+    '111': '서해선',
+    '112': '김포골드라인',
+    '113': '수도권9호선',
+    '114': '신림선',
+  };
+
+  /// 지하철일 때 표시할 노선명 (예: "2호선", "신분당선")
+  String get subwayLineName {
+    if (!isSubway || no.isEmpty) return '지하철';
+    final lineNo = no.first;
+    return _subwayLineNames[lineNo] ?? '${lineNo}호선';
   }
 
   factory PathModel.fromJson(Map<String, dynamic> json) => PathModel(

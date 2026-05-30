@@ -7,6 +7,8 @@ import 'package:ruttu_app/core/constants/api_constants.dart';
 
 abstract class HomeRepository {
   Future<List<RoutineModel>> getRoutines();
+  Future<RoutineModel> getRoutineDetail(int routineId);
+  Future<RouteModel> getRouteDetail(int recoId);
   Future<LiveStatusModel> getLiveStatus();
   Future<LiveRouteModel> getMyRoute();
   Future<LiveRouteModel> getRecommendedRoute();
@@ -20,21 +22,49 @@ abstract class HomeRepository {
     required double speed,
     required double accuracy,
   });
+
+  /// POST /me/routines/complete (routineId 제외 반영)
+  Future<void> completeRoutine({
+    required DateTime departureTime,
+    required DateTime arrivalTime,
+    int? satWaitTimeScore,
+    int? satEtaScore,
+    int? satRouteScore,
+  });
 }
 
 /// 실제 백엔드 API를 호출하는 구현체
-/// AI 브리핑(날씨) 외 모든 기능이 구현되어 있습니다.
 class ApiHomeRepository implements HomeRepository {
-  ApiHomeRepository(this._dio);
+  ApiHomeRepository(this._dio)
+      : fastApiDio = Dio(
+          BaseOptions(
+            baseUrl: ApiConstants.fastapiBaseUrl,
+            connectTimeout: const Duration(seconds: 15),
+            receiveTimeout: const Duration(seconds: 30),
+            headers: const {'Content-Type': 'application/json'},
+          ),
+        );
   final Dio _dio;
+  final Dio fastApiDio;
 
   @override
   Future<List<RoutineModel>> getRoutines() async {
     final response = await _dio.get(ApiConstants.routines);
-    final data = response.data as List<dynamic>;
-    return data
+    return (response.data as List)
         .map((e) => RoutineModel.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  @override
+  Future<RoutineModel> getRoutineDetail(int routineId) async {
+    final response = await _dio.get(ApiConstants.routineById(routineId));
+    return RoutineModel.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<RouteModel> getRouteDetail(int recoId) async {
+    final response = await _dio.get(ApiConstants.routeRecommendDetail(recoId));
+    return RouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
   @override
@@ -57,41 +87,20 @@ class ApiHomeRepository implements HomeRepository {
 
   @override
   Future<CurrentSectionModel?> getCurrentSection() async {
-    try {
-      final response = await _dio.get(ApiConstants.liveCurrentSection);
-      return CurrentSectionModel.fromJson(response.data as Map<String, dynamic>);
-    } catch (_) {
-      return null;
-    }
+    final response = await _dio.get(ApiConstants.liveCurrentSection);
+    return CurrentSectionModel.fromJson(response.data as Map<String, dynamic>);
   }
 
   @override
   Future<List<IssueModel>> getTodayIssues() async {
-    try {
-      final response = await _dio.get(ApiConstants.todayIssues);
-      final data = response.data as List<dynamic>;
-      return data
-          .map((e) => IssueModel.fromJson(e as Map<String, dynamic>))
-          .toList();
-    } catch (_) {
-      return [];
-    }
+    final response = await _dio.get(ApiConstants.todayIssues);
+    return (response.data as List)
+        .map((e) => IssueModel.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
-  /// AI 브리핑 날씨 — FastAPI 서버에서 가져옵니다.
-  /// 아직 미구현인 경우 예외를 던지며, home_provider에서 catch하여 null 처리합니다.
   @override
   Future<WeatherAirQualityModel> getWeatherAirQuality() async {
-    final fastApiDio = Dio(BaseOptions(
-      baseUrl: ApiConstants.fastapiBaseUrl,
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 30),
-      headers: const {'Content-Type': 'application/json'},
-    ));
-    // access token 주입
-    final token = _dio.options.headers['Authorization'];
-    if (token != null) fastApiDio.options.headers['Authorization'] = token;
-
     final response = await fastApiDio.get(ApiConstants.briefingWeather);
     return WeatherAirQualityModel.fromJson(response.data as Map<String, dynamic>);
   }
@@ -116,6 +125,38 @@ class ApiHomeRepository implements HomeRepository {
       debugPrint('[LiveLocation] 전송 성공: lat=$latitude, lng=$longitude');
     } catch (e) {
       debugPrint('[LiveLocation] 전송 실패 (무시됨): $e');
+    }
+  }
+
+  @override
+  Future<void> completeRoutine({
+    required DateTime departureTime,
+    required DateTime arrivalTime,
+    int? satWaitTimeScore,
+    int? satEtaScore,
+    int? satRouteScore,
+  }) async {
+    String formatTime(DateTime time) {
+      return '${time.hour.toString().padLeft(2, '0')}:'
+             '${time.minute.toString().padLeft(2, '0')}:'
+             '${time.second.toString().padLeft(2, '0')}';
+    }
+
+    try {
+      await _dio.post(
+        ApiConstants.routineComplete,
+        data: {
+          'departureTime': formatTime(departureTime),
+          'arrivalTime': formatTime(arrivalTime),
+          'satWaitTimeScore': satWaitTimeScore,
+          'satEtaScore': satEtaScore,
+          'satRouteScore': satRouteScore,
+        },
+      );
+      debugPrint('[CompleteRoutine] 전송 성공');
+    } catch (e) {
+      debugPrint('[CompleteRoutine] 전송 실패: $e');
+      rethrow;
     }
   }
 }

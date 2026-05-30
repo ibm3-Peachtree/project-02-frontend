@@ -31,12 +31,13 @@ class ApiConstants {
       '/me/routines/routes/recommend/$recoId';
 
   // ── 6. Live Routine ──────────────────────────────────────
-  static const liveStatus = '/me/routines/active/status';
-  static const liveMyRoute = '/me/routines/active/route';
-  static const liveRecoRoute = '/me/routines/active/reco';   // 오타 수정: /me/routes → /me/routines
+  static const liveStatus         = '/me/routines/active/status';
+  static const liveMyRoute        = '/me/routines/active/route';
+  static const liveRecoRoute      = '/me/routines/active/reco';
   static const liveCurrentSection = '/me/routines/active/location';
-  static const liveLocation = '/me/routines/active';
-  static const todayIssues = '/me/issues';
+  static const liveLocation       = '/me/routines/active/location';
+  static const routineComplete    = '/me/routines/active/complete';
+  static const todayIssues        = '/me/issues';
 
   // ── 7. Report ────────────────────────────────────────────
   static const weeklyReport = '/me/reports/weekly';

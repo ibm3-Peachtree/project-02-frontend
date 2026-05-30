@@ -111,8 +111,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
       final user = await _repository.getCachedUser();
       state = AuthState(
-        //status: hasNickname ? AuthStatus.authenticated : AuthStatus.needsNickname,
-        status: AuthStatus.authenticated,
+        status: response.isNew
+            ? AuthStatus.needsOnboarding
+            : AuthStatus.authenticated,
         user: user,
       );
 
@@ -136,18 +137,26 @@ class AuthNotifier extends StateNotifier<AuthState> {
     return true;
   }
 
+  /// 온보딩 완료 → authenticated로 전환
+  void completeOnboarding() {
+    state = state.copyWith(status: AuthStatus.authenticated);
+  }
+
   /// POST /auth/logout
   Future<void> signOut() async {
+    // 로컬 정리는 API 성공 여부와 무관하게 반드시 실행
     try {
       final refreshToken = await _tokenStorage.getRefreshToken() ?? '';
       await _repository.signOut(refreshToken);
-      debugPrint(" 로그아웃 API 성공");
+      debugPrint('✅ 로그아웃 API 성공');
     } catch (e) {
-      debugPrint("로그아웃 API 실패: $e");
+      // 403/401 등 API 실패는 무시 — 어차피 토큰 만료 상태
+      debugPrint('로그아웃 API 실패 (무시됨): $e');
+    } finally {
+      await _tokenStorage.clearTokens();
+      await GoogleSignIn().signOut();
+      state = const AuthState(status: AuthStatus.unauthenticated);
     }
-    await _tokenStorage.clearTokens();
-    await GoogleSignIn().signOut();
-    state = const AuthState(status: AuthStatus.unauthenticated);
   }
 
   /// JWT refresh 토큰까지 만료됐을 때 강제 로그아웃 (앱 재시작 없이 즉시 반영)

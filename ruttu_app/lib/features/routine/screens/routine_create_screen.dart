@@ -9,6 +9,7 @@ import '../../../data/models/routine_model.dart';
 import '../../../data/models/route_model.dart';
 import '../../../data/repositories/routine_repository.dart';
 import '../providers/routine_provider.dart';
+import '../../home/providers/home_provider.dart';
 
 class RoutineCreateScreen extends ConsumerStatefulWidget {
   final RoutineModel? editRoutine;
@@ -168,7 +169,11 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
       } else {
         await ref.read(routineListProvider.notifier).createRoutine(request);
       }
-      if (mounted) context.pop();
+      // ✅ 루틴 생성/수정 후 홈 화면 추천 경로 재조회
+      if (mounted) {
+        ref.read(homeProvider.notifier).refresh();
+        context.pop();
+      }
     } on DioException catch (e) {
       if (!mounted) return;
       // 서버 응답이 JSON Map일 수도, plain String일 수도 있어서 안전하게 처리
@@ -1286,10 +1291,48 @@ class _DetailPathItemState extends State<_DetailPathItem> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(subtitle,
-                    style: const TextStyle(
-                        fontSize: 13, color: AppColors.textSecondary)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE3F0FC),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${path.sectionTime}분',
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1155CC)),
+                      ),
+                    ),
+                    if (hasStations) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE6F4EA),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          path.stationCountLabel,
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF1E6B30)),
+                        ),
+                      ),
+                    ],
+                    if (path.way != null) ...[
+                      const SizedBox(width: 6),
+                      Text(path.way!,
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.textSecondary)),
+                    ],
+                  ],
+                ),
                 // 정류장 수직 목록 (펼쳤을 때)
                 if (hasStations && _expanded) ...[
                   const SizedBox(height: 8),
