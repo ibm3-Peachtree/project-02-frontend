@@ -6,6 +6,9 @@ import 'core/config/env_config.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/router.dart';
 
+// GPS 권한 요청은 최초 가입(로그인 성공) 시 auth_provider에서 1회만 수행합니다.
+// main.dart에서는 요청하지 않습니다.
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('ko', null);

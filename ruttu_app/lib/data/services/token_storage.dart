@@ -7,6 +7,7 @@ class TokenStorage {
   static const _refreshTokenKey = 'refresh_token';
   static const _userIdKey = 'user_id';
   static const _hasNicknameKey = 'has_nickname';
+  static const _gpsPermissionRequestedKey = 'gps_permission_requested';
 
   Future<void> saveTokens({
     required String accessToken,
@@ -53,6 +54,15 @@ class TokenStorage {
     final value = await _storage.read(key: _hasNicknameKey);
     return value == 'true';
   }
+
+  /// GPS 권한 요청을 이미 했는지 여부 (최초 가입 시 1회만 요청하기 위해 사용)
+  Future<bool> hasRequestedGpsPermission() async {
+    final value = await _storage.read(key: _gpsPermissionRequestedKey);
+    return value == 'true';
+  }
+
+  Future<void> setGpsPermissionRequested() =>
+      _storage.write(key: _gpsPermissionRequestedKey, value: 'true');
 
   Future<void> clearAll() =>
       _storage.deleteAll();

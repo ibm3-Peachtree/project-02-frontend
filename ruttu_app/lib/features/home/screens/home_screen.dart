@@ -403,8 +403,11 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                             route: widget.home.recommendedRoute,
                             hasIncident: false,
                             onKeep: () => _tabController.animateTo(0),
-                            // 추천 경로로 변경: 상태는 그대로, 탭만 나의 경로로 전환
-                            onSwitch: () => _tabController.animateTo(0),
+                            onSwitch: () {
+                              // 추천 경로를 나의 경로로 교체 후 탭 전환
+                              ref.read(homeProvider.notifier).switchToRecommendedRoute();
+                              _tabController.animateTo(0);
+                            },
                           ),
                         ),
                       ],
@@ -470,69 +473,128 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     } catch (_) {}
   }
 
-  /// RouteXYModel 목록을 type별로 색상을 달리해 NPathOverlay로 그립니다.
-  /// x = 경도(longitude), y = 위도(latitude)
+  /// RouteXYModel 목록을 지도에 폴리라인으로 그립니다.
+  /// - walk 구간: x/y가 null → 앞뒤 유효 좌표를 직선으로 연결
+  /// - bus/subway 구간: 정류장 순서대로 연결
   Future<void> _drawRouteOnMap(
       NaverMapController controller, List<RouteXYModel> coords) async {
     if (coords.isEmpty) return;
 
-    // 기존 오버레이 전부 제거
     await controller.clearOverlays();
 
-    // type별로 연속 구간을 그룹핑
-    final segments = <({String type, List<NLatLng> points})>[];
-    String? currentType;
-    List<NLatLng> currentPoints = [];
+    // 유효 좌표만 추출 (null 좌표 건너뜀)
+    final validCoords = coords.where((c) => c.hasCoord).toList();
+    if (validCoords.isEmpty) return;
 
-    for (final c in coords) {
-      if (c.x == null || c.y == null) continue;
-      final pt = NLatLng(c.y!, c.x!); // y=lat, x=lng
-      final type = c.type ?? 'walk';
-      if (type != currentType) {
-        if (currentPoints.length >= 2 && currentType != null) {
-          segments.add((type: currentType!, points: List.of(currentPoints)));
+    // 전체 경로를 하나의 NLatLng 목록으로 만든 뒤 type별로 색상 분할
+    // → walk 구간은 앞뒤 정류장 사이를 직선으로 이어붙임
+    // → 연속된 좌표 목록을 type별 세그먼트로 그룹핑
+    final allPoints = <({NLatLng pt, String type})>[];
+    for (var i = 0; i < coords.length; i++) {
+      final c = coords[i];
+      if (c.hasCoord) {
+        allPoints.add((pt: NLatLng(c.y!, c.x!), type: c.type ?? 'walk'));
+      } else if (c.type == 'walk') {
+        // walk이고 좌표 없음 → 앞뒤 유효점 사이 중간점 추가 (자연스러운 연결)
+        // 앞 유효 좌표
+        NLatLng? prev;
+        for (var j = i - 1; j >= 0; j--) {
+          if (coords[j].hasCoord) {
+            prev = NLatLng(coords[j].y!, coords[j].x!);
+            break;
+          }
         }
-        currentType = type;
-        currentPoints = [pt];
-      } else {
-        currentPoints.add(pt);
+        // 뒤 유효 좌표
+        NLatLng? next;
+        for (var j = i + 1; j < coords.length; j++) {
+          if (coords[j].hasCoord) {
+            next = NLatLng(coords[j].y!, coords[j].x!);
+            break;
+          }
+        }
+        // prev → next 직선 연결을 위해 양쪽 끝점만 추가 (중복 없이)
+        if (prev != null && allPoints.isEmpty) {
+          allPoints.add((pt: prev, type: 'walk'));
+        }
+        if (next != null) {
+          allPoints.add((pt: next, type: 'walk'));
+        }
       }
     }
-    // 마지막 구간
-    if (currentPoints.length >= 2 && currentType != null) {
-      segments.add((type: currentType!, points: List.of(currentPoints)));
+
+    if (allPoints.length < 2) return;
+
+    // type별 연속 세그먼트 그룹핑
+    final segments = <({String type, List<NLatLng> points})>[];
+    String currentType = allPoints.first.type;
+    List<NLatLng> currentPoints = [allPoints.first.pt];
+
+    for (var i = 1; i < allPoints.length; i++) {
+      final item = allPoints[i];
+      if (item.type != currentType) {
+        if (currentPoints.length >= 2) {
+          segments.add((type: currentType, points: List.of(currentPoints)));
+        }
+        // 경계 연결: 이전 마지막 점을 새 세그먼트 첫 점으로
+        currentType = item.type;
+        currentPoints = [currentPoints.last, item.pt];
+      } else {
+        currentPoints.add(item.pt);
+      }
+    }
+    if (currentPoints.length >= 2) {
+      segments.add((type: currentType, points: List.of(currentPoints)));
     }
 
     Color typeColor(String type) {
       switch (type) {
         case 'subway': return Colors.blue;
-        case 'bus':    return Colors.green;
-        default:       return AppColors.textSecondary; // walk
+        case 'bus':    return const Color(0xFF22C55E); // 초록
+        default:       return const Color(0xFF9CA3AF); // 도보: 회색 점선 느낌
       }
     }
+
+    double typeWidth(String type) => type == 'walk' ? 3.0 : 6.0;
 
     for (var i = 0; i < segments.length; i++) {
       final seg = segments[i];
       if (seg.points.length < 2) continue;
-      final overlay = NPathOverlay(
-        id: 'route_seg_$i',
+      await controller.addOverlay(NPolylineOverlay(
+        id: 'seg_$i',
         coords: seg.points,
         color: typeColor(seg.type),
-        width: 5,
-        outlineColor: Colors.white,
-        outlineWidth: 1,
-      );
-      await controller.addOverlay(overlay);
+        width: typeWidth(seg.type),
+      ));
     }
 
-    // 현재 위치 마커
-    final cur = coords[widget.home.currentStepIndex.clamp(0, coords.length - 1)];
-    if (cur.x != null && cur.y != null) {
-      final marker = NMarker(
+    // 현재 위치 마커 — idx 기준으로 유효 좌표 찾기
+    final curIdx = widget.home.currentStepIndex;
+    RouteXYModel? curPoint;
+    // idx 근처에서 유효 좌표 탐색
+    for (var offset = 0; offset < coords.length; offset++) {
+      final fwd = curIdx + offset;
+      final bwd = curIdx - offset;
+      if (fwd < coords.length && coords[fwd].hasCoord) {
+        curPoint = coords[fwd];
+        break;
+      }
+      if (bwd >= 0 && coords[bwd].hasCoord) {
+        curPoint = coords[bwd];
+        break;
+      }
+    }
+    if (curPoint != null) {
+      await controller.addOverlay(NMarker(
         id: 'current_pos',
-        position: NLatLng(cur.y!, cur.x!),
+        position: NLatLng(curPoint.y!, curPoint.x!),
+      ));
+      // 현재 위치로 카메라 이동
+      await controller.updateCamera(
+        NCameraUpdate.scrollAndZoomTo(
+          target: NLatLng(curPoint.y!, curPoint.x!),
+          zoom: 15,
+        ),
       );
-      await controller.addOverlay(marker);
     }
   }
 
@@ -1041,29 +1103,61 @@ class _RecommendedPanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  Text('${route?.totalTime ?? 32}분',
-                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: hasIncident ? AppColors.secondary : AppColors.primary)),
-                ]),
+                Text('${route?.totalTime ?? '--'}분',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: hasIncident ? AppColors.secondary : AppColors.primary)),
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 4,
-                  children: [
-                    _RouteChip(label: '🚶', color: AppColors.textSecondary),
-                    _RouteChip(label: hasIncident ? '신분당선' : '2호선', color: hasIncident ? Colors.red : Colors.green),
-                    _RouteChip(label: '🚶', color: AppColors.textSecondary),
-                    _RouteChip(label: hasIncident ? '3200번' : '147번', color: Colors.orange),
-                    _RouteChip(label: '🚶', color: AppColors.textSecondary),
-                  ],
-                ),
+                // 실제 API 데이터로 경로 칩 표시
+                Builder(builder: (context) {
+                  final r = route;
+                  if (r != null && r.path.isNotEmpty) {
+                    return Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: r.path.map((p) {
+                        if (p.isWalking) {
+                          return _RouteChip(label: '🚶', color: AppColors.textSecondary);
+                        } else if (p.isSubway) {
+                          return _RouteChip(
+                            label: p.no.isNotEmpty ? '${p.no.first}호선' : '지하철',
+                            color: Colors.blue,
+                          );
+                        } else {
+                          return _RouteChip(
+                            label: p.no.isNotEmpty ? '${p.no.first}번' : '버스',
+                            color: Colors.orange,
+                          );
+                        }
+                      }).toList(),
+                    );
+                  }
+                  return const Text('경로 정보 없음',
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary));
+                }),
                 const SizedBox(height: 8),
-                Text('예상 요금 ${hasIncident ? '1,600원' : '1,400원'}',
-                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                Builder(builder: (context) {
+                  final r = route;
+                  return Text('예상 요금 ${r != null ? '${_formatPayment(r.payment)}원' : '--'}',
+                      style: const TextStyle(fontSize: 13, color: AppColors.textSecondary));
+                }),
                 if (hasIncident) ...[
                   const SizedBox(height: 4),
                   const Text('+6분 (돌발 우회)',
                       style: TextStyle(fontSize: 12, color: AppColors.secondary, fontWeight: FontWeight.w500)),
                 ],
+                // 구간 상세도 표시
+                Builder(builder: (context) {
+                  final r = route;
+                  if (r != null && r.path.isNotEmpty) {
+                    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const SizedBox(height: 12),
+                      const Divider(height: 1),
+                      const SizedBox(height: 8),
+                      ...r.path.asMap().entries.map((e) =>
+                          _PathItem(path: e.value, isCurrent: false, isLast: e.key == r.path.length - 1)),
+                    ]);
+                  }
+                  return const SizedBox.shrink();
+                }),
               ],
             ),
           ),
@@ -1095,6 +1189,16 @@ class _RecommendedPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+String _formatPayment(int n) {
+  final s = n.toString();
+  final buf = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+    buf.write(s[i]);
+  }
+  return buf.toString();
 }
 
 class _RouteChip extends StatelessWidget {

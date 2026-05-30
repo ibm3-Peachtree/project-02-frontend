@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../../core/config/env_config.dart';
 import '../../../data/repositories/auth_repository.dart';
 import '../../../data/services/token_storage.dart';
@@ -114,6 +115,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
         status: AuthStatus.authenticated,
         user: user,
       );
+
+      // ✅ 최초 가입(로그인) 시에만 GPS 권한 1회 요청
+      // 이미 요청한 적 있으면 스킵, 권한이 꺼져 있으면 앱 사용 중 별도 처리
+      await _requestGpsPermissionIfNeeded();
     } catch (e) {
       debugPrint("❌ 로그인 전체 에러: $e");
       state = AuthState(
@@ -157,4 +162,32 @@ class AuthNotifier extends StateNotifier<AuthState> {
     await _tokenStorage.clearAll();
     state = const AuthState(status: AuthStatus.unauthenticated);
   }
-}
+
+  /// 최초 가입(로그인) 시 GPS 권한을 1회만 요청합니다.
+  /// - 이미 요청한 적 있으면 스킵
+  /// - 이미 권한이 있으면 스킵
+  /// - denied 상태라면 OS 권한 다이얼로그 표시
+  /// - deniedForever(영구 거부)라면 요청 없이 플래그만 기록 → 앱 사용 중 별도 안내
+  Future<void> _requestGpsPermissionIfNeeded() async {
+    try {
+      final alreadyRequested = await _tokenStorage.hasRequestedGpsPermission();
+      if (alreadyRequested) return; // 이미 요청한 적 있음 → 스킵
+
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse) {
+        // 이미 허용 상태 → 플래그만 저장하고 종료
+        await _tokenStorage.setGpsPermissionRequested();
+        return;
+      }
+
+      if (permission != LocationPermission.deniedForever) {
+        // denied(한 번도 안 물어봤거나 거부) → 요청
+        await Geolocator.requestPermission();
+      }
+      // deniedForever는 요청 없이 플래그만 기록 → 이후 앱 사용 중 설정 유도
+      await _tokenStorage.setGpsPermissionRequested();
+    } catch (e) {
+      debugPrint('[GPS] 권한 요청 오류: $e');
+    }
+  }}

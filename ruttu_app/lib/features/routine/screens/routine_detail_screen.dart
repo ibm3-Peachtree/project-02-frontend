@@ -336,13 +336,23 @@ class _RouteDetailFallback extends ConsumerWidget {
 }
 
 // ── 경로 단계 항목 ──────────────────────────────────────
-class _PathStepItem extends StatelessWidget {
+class _PathStepItem extends StatefulWidget {
   final PathModel path;
   final bool isLast;
   const _PathStepItem({required this.path, required this.isLast});
 
   @override
+  State<_PathStepItem> createState() => _PathStepItemState();
+}
+
+class _PathStepItemState extends State<_PathStepItem> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final path = widget.path;
+    final isLast = widget.isLast;
+
     final icon = path.isWalking
         ? Icons.directions_walk
         : path.isSubway
@@ -385,52 +395,150 @@ class _PathStepItem extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // 출발 → 도착
                 if (path.start != null || path.end != null)
                   Text(
                     '${path.start ?? ''} → ${path.end ?? ''}',
                     style: const TextStyle(
                         fontSize: 14, fontWeight: FontWeight.w600),
                   ),
-                const SizedBox(height: 4),
-                // 노선 번호를 강조해서 보여주기
-                if (!path.isWalking && path.no.isNotEmpty)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 4),
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: (path.isSubway ? Colors.blue : Colors.green).withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      path.isSubway ? '${path.no.first}호선 (${path.way ?? ''} 방향)' : '${path.no.first}번 버스',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: path.isSubway ? Colors.blue : Colors.green,
+                const SizedBox(height: 6),
+
+                if (path.isWalking) ...[
+                  // 도보: 시간만 강조
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.textSecondary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '${path.sectionTime}분',
+                          style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textSecondary),
+                        ),
+                      ),
+                    ],
+                  ),
+                ] else ...[
+                  // 지하철/버스: 노선 배지 (상단에만 표시)
+                  if (path.no.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        path.isSubway
+                            ? '${path.no.first}호선 (${path.way ?? ''} 방향)'
+                            : '${path.no.first}번 버스',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: color,
+                        ),
                       ),
                     ),
+                  // 시간 + 정거장 수 강조 배지 (중복 없이)
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '${path.sectionTime}분',
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: color),
+                        ),
+                      ),
+                      if (path.stationCount != null) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '${path.stationCount}정거장',
+                            style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                color: color),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                Text(
-                  [
-                    '${path.typeLabel} ${path.sectionTime}분',
-                    if (path.stationCount != null) '${path.stationCount}정거장',
-                    if (path.no.isNotEmpty) _noLabel(path),
-                  ].join(' · '),
-                  style: const TextStyle(
-                      fontSize: 13, color: AppColors.textSecondary),
-                ),
+                  // 정거장 목록 펼치기/접기 — stationName 또는 stationCount 기준
+                  if (path.stationName.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    GestureDetector(
+                      onTap: () => setState(() => _expanded = !_expanded),
+                      child: Row(
+                        children: [
+                          Text(
+                            _expanded
+                                ? '정류장 접기'
+                                : '정류장 ${path.stationName.length}개 모두 보기',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: color,
+                                fontWeight: FontWeight.w500),
+                          ),
+                          Icon(
+                            _expanded
+                                ? Icons.keyboard_arrow_up
+                                : Icons.keyboard_arrow_down,
+                            size: 14,
+                            color: color,
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_expanded) ...[
+                      const SizedBox(height: 6),
+                      ...path.stationName.map((station) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 6, height: 6,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: color.withValues(alpha: 0.5),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(station,
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.textSecondary)),
+                                ),
+                              ],
+                            ),
+                          )),
+                    ],
+                  ],
+                ],
               ],
             ),
           ),
         ),
       ],
     );
-  }
-
-  String _noLabel(PathModel path) {
-    if (path.isSubway) return '${path.no.first}호선';
-    if (path.isBus)    return '${path.no.first}번';
-    return '';
   }
 }
 

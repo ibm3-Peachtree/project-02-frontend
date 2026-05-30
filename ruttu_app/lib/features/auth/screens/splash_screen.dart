@@ -24,7 +24,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
   Future<void> _onGoogleSignIn() async {
     await ref.read(authProvider.notifier).signInWithGoogle();
+    // GPS 권한 요청은 auth_provider.signInWithGoogle() 내부에서 처리합니다.
+    // deniedForever인 경우 location_service.ensurePermission()이
+    // 경로 시작 시 설정 안내를 띄웁니다.
   }
+
 
   String _friendlyError(String raw) {
     if (raw.contains('503') || raw.contains('Service Unavailable')) {

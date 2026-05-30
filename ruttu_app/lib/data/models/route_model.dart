@@ -199,16 +199,22 @@ class LiveRouteModel {
 
 // GET /me/routines/active/location 응답 — RouteXYDto 단일 좌표 포인트
 class RouteXYModel {
-  final double? x;    // 경도 (longitude)
-  final double? y;    // 위도 (latitude)
-  final String? type; // "walk" | "bus" | "subway"
+  final String? stationName; // 정류장/역 이름 (null이면 도보 구간)
+  final double? x;           // 경도 (longitude)
+  final double? y;           // 위도 (latitude)
+  final String? arsID;       // 버스 정류장 ID
+  final String? type;        // "walk" | "bus" | "subway"
 
-  const RouteXYModel({this.x, this.y, this.type});
+  const RouteXYModel({this.stationName, this.x, this.y, this.arsID, this.type});
+
+  bool get hasCoord => x != null && y != null;
 
   factory RouteXYModel.fromJson(Map<String, dynamic> json) => RouteXYModel(
-        x:    (json['x'] as num?)?.toDouble(),
-        y:    (json['y'] as num?)?.toDouble(),
-        type: json['type'] as String?,
+        stationName: json['stationName'] as String?,
+        x:           (json['x'] as num?)?.toDouble(),
+        y:           (json['y'] as num?)?.toDouble(),
+        arsID:       json['arsID'] as String?,
+        type:        json['type'] as String?,
       );
 }
 

@@ -52,6 +52,11 @@ dependencies:
   # 주소 검색 (카카오 우편번호 WebView)
   webview_flutter: ^4.13.0
 
+  # 알림 / TTS / 타임존
+  flutter_local_notifications: ^18.0.1
+  flutter_tts: ^4.2.0
+  timezone: ^0.9.4
+
   # 유틸
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0
