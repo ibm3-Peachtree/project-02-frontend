@@ -21,6 +21,9 @@ class HomeState {
   /// 경로 시작(출발) 시각 — completeRoutine 호출 시 departureTime으로 사용
   final DateTime? departureTime;
 
+  /// 폴링에서 받은 raw section 데이터 — 정거장 위치 계산에 사용
+  final CurrentSectionModel? currentSectionData;
+
   const HomeState({
     this.status = HomeStatus.noRoutine,
     this.isLoading = false,
@@ -34,6 +37,7 @@ class HomeState {
     this.stepRemainingMinutes = 0,
     this.routeCoordinates = const [],
     this.departureTime,
+    this.currentSectionData,
   });
 
   bool get isDepartureImminent {
@@ -46,6 +50,79 @@ class HomeState {
         int.parse(parts[0]), int.parse(parts[1]));
     final diff = dep.difference(now).inMinutes;
     return diff >= 0 && diff <= 10;
+  }
+
+  /// 도보/대기 중 여부
+  /// liveStatus.status를 우선 사용 (speed 기반으로 정확).
+  /// "탑승중" → false (버스/지하철 탑승), 나머지 → true (도보/대기)
+  bool get isWalking {
+    final statusStr = liveStatus?.status;
+    if (statusStr != null) {
+      if (statusStr == '탑승중') return false;
+      if (statusStr == '도보중') return true;
+      if (statusStr == '대기중') return false; // 정류장 대기 중 → 탑승 준비 상태
+    }
+    // liveStatus 없으면 section 데이터로 폴백
+    final sec = currentSectionData;
+    if (sec == null) return true;
+    // idx = 도착 예정 구간이므로, 현재 있는 구간은 idx - 1
+    final currentIdx = sec.idx - 1; // 현재 구간 (idx는 도착 예정)
+    final raw = sec.section;
+    if (currentIdx < 0 || currentIdx >= raw.length) return true;
+    return raw[currentIdx] == 'walk';
+  }
+
+  /// 현재 구간(버스/지하철) 내 남은 정거장 수.
+  /// 도보/대기 중이면 null 반환.
+  int? get stopsRemaining {
+    // liveStatus 기반으로 탑승 중이 아니면 null
+    if (isWalking) return null;
+
+    final sec = currentSectionData;
+    if (sec == null) return null;
+    final raw = sec.section;
+    // idx = 도착 예정 구간, 현재 탑승 중인 구간은 idx - 1
+    final currentIdx = sec.idx - 1;
+    if (currentIdx < 0 || currentIdx >= raw.length) return null;
+
+    final currentType = raw[currentIdx];
+    if (currentType == 'walk') return null;
+
+    // 남은 정거장 수: idx(도착 예정)까지 남은 개수 = idx - 1 - currentIdx
+    final remaining = sec.idx - 1 - currentIdx;
+    return remaining >= 0 ? remaining : 0;
+  }
+
+  /// 현재 위치 정거장 이름
+  /// - 도보/대기 중: 다음 탑승 위치(정거장) 이름
+  /// - 탑승 중: 현재 정거장 이름
+  String? get currentStationName {
+    final sec = currentSectionData;
+    if (sec == null) return null;
+    final idx = sec.idx;
+    if (sec.xy.isEmpty) return null;
+    final raw = sec.section;
+
+    if (isWalking) {
+      // 도보/대기 중: idx(도착 예정 구간)의 탑승 정거장 이름 반환
+      if (idx >= 0 && idx < raw.length && idx < sec.xy.length && raw[idx] != 'walk') {
+        final name = sec.xy[idx].stationName;
+        if (name != null && name.isNotEmpty) return name;
+      }
+      // idx 이후에서 탑승 정거장 탐색
+      for (var i = idx + 1; i < raw.length && i < sec.xy.length; i++) {
+        if (raw[i] != 'walk') {
+          final name = sec.xy[i].stationName;
+          if (name != null && name.isNotEmpty) return name;
+        }
+      }
+      return null;
+    }
+
+    // 탑승 중: 현재 구간(idx - 1)의 정거장 이름
+    final currentIdx = idx - 1;
+    if (currentIdx < 0 || currentIdx >= sec.xy.length) return null;
+    return sec.xy[currentIdx].stationName;
   }
 
   HomeState copyWith({
@@ -61,6 +138,7 @@ class HomeState {
     int? stepRemainingMinutes,
     List<RouteXYModel>? routeCoordinates,
     DateTime? departureTime,
+    CurrentSectionModel? currentSectionData,
   }) =>
       HomeState(
         status: status ?? this.status,
@@ -75,5 +153,6 @@ class HomeState {
         stepRemainingMinutes: stepRemainingMinutes ?? this.stepRemainingMinutes,
         routeCoordinates: routeCoordinates ?? this.routeCoordinates,
         departureTime: departureTime ?? this.departureTime,
+        currentSectionData: currentSectionData ?? this.currentSectionData,
       );
 }

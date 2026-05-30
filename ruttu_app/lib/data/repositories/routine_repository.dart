@@ -139,10 +139,15 @@ class ApiRoutineRepository implements RoutineRepository {
     return RouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
-  // 주소 API 미구현 — Mock 데이터 사용
+  // ✅ 주소 API 실 연동
   @override
-  Future<List<AddressModel>> getAddresses() =>
-      MockRoutineRepository().getAddresses();
+  Future<List<AddressModel>> getAddresses() async {
+    final response = await _dio.get('/address');
+    final list = response.data as List<dynamic>;
+    return list
+        .map((e) => AddressModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
 
   @override
   Future<AddressModel> addAddress({
@@ -150,13 +155,14 @@ class ApiRoutineRepository implements RoutineRepository {
     required String address,
     double? latitude,
     double? longitude,
-  }) =>
-      MockRoutineRepository().addAddress(
-        name: name,
-        address: address,
-        latitude: latitude,
-        longitude: longitude,
-      );
+  }) async {
+    final res = await _dio.post('/address', data: {
+      'name': name,
+      'roadAddress': address,
+      'jibunAddress': '',
+    });
+    return AddressModel.fromJson(res.data as Map<String, dynamic>);
+  }
 }
 
 class MockRoutineRepository implements RoutineRepository {
@@ -187,25 +193,25 @@ class MockRoutineRepository implements RoutineRepository {
   Future<List<AddressModel>> getAddresses() async {
     return [
       AddressModel(
+        addressId: 3,
+        name: "집",
+        roadAddress: "서울특별시 동작구 노량진동 89-8",
+        latitude: 37.512482,
+        longitude: 126.943516,
+      ),
+      AddressModel(
         addressId: 4,
         name: "집",
-        roadAddress: "서울특별시 강남구 테헤란로 123",
-        latitude: 37.5012,
-        longitude: 127.0396,
+        roadAddress: "서울특별시 동작구 신대방1가길 38",
+        latitude: 37.487614,
+        longitude: 126.907357,
       ),
       AddressModel(
         addressId: 5,
         name: "회사",
-        roadAddress: "서울특별시 중구 세종대로 110",
-        latitude: 37.5665,
-        longitude: 126.9780,
-      ),
-      AddressModel(
-        addressId: 6,
-        name: "헬스장",
-        roadAddress: "서울특별시 서초구 서초대로 74길 11",
-        latitude: 37.4842,
-        longitude: 127.0348,
+        roadAddress: "서울특별시 종로구 인사동12길",
+        latitude: 37.574776,
+        longitude: 126.984996,
       ),
     ];
   }

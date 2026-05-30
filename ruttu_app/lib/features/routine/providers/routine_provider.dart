@@ -4,6 +4,7 @@ import '../../../data/models/address_model.dart';
 import '../../../data/models/route_model.dart';
 import '../../../data/repositories/routine_repository.dart';
 import '../../auth/providers/network_provider.dart';
+import '../../mypage/providers/address_provider.dart';
 
 final routineRepositoryProvider = Provider<RoutineRepository>(
   (ref) => ApiRoutineRepository(ref.read(apiClientProvider)),
@@ -49,9 +50,10 @@ final routineDetailProvider =
   return ref.watch(routineRepositoryProvider).getRoutineDetail(routineId);
 });
 
-// 주소 목록
+// 주소 목록 — addressRepositoryProvider(/address API)를 watch해서
+// createAddress 후 invalidate 시 자동으로 재조회됩니다.
 final addressListProvider = FutureProvider<List<AddressModel>>((ref) {
-  return ref.read(routineRepositoryProvider).getAddresses();
+  return ref.read(addressRepositoryProvider).getAddresses();
 });
 
 // 경로 상세 조회 (routineDetail의 route가 null일 때 fallback)

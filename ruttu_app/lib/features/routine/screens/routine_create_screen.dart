@@ -10,6 +10,7 @@ import '../../../data/models/route_model.dart';
 import '../../../data/repositories/routine_repository.dart';
 import '../providers/routine_provider.dart';
 import '../../home/providers/home_provider.dart';
+import '../../auth/providers/network_provider.dart';
 
 class RoutineCreateScreen extends ConsumerStatefulWidget {
   final RoutineModel? editRoutine;
@@ -101,9 +102,18 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
             arrivalAddressId: _arrival!.addressId,
             targetArrivalTime: _arrivalTimeStr,
           );
+      // 수정 모드: 기존 recoId와 일치하는 경로를 자동 선택
+      int? autoSelect;
+      final existingRecoId = widget.editRoutine?.route?.recoId;
+      if (existingRecoId != null && existingRecoId > 0) {
+        final idx = routes.indexWhere((r) => r.recoId == existingRecoId);
+        if (idx != -1) autoSelect = idx;
+        else autoSelect = 0; // 일치하는 경로 없으면 첫 번째 선택
+      }
       setState(() {
         _routes = routes;
         _loadingRoutes = false;
+        if (autoSelect != null) _selectedRouteIndex = autoSelect;
       });
     } catch (_) {
       setState(() => _loadingRoutes = false);
@@ -148,9 +158,22 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
   //
   // DI에서 MockHomeRepository가 아닌 ApiHomeRepository가 주입됐는지도 확인하세요.
   Future<void> _save() async {
-    if (_selectedRouteIndex == null) return;
-    final selectedRoute = _routes[_selectedRouteIndex!];
     final routineName = _nameController.text.trim();
+
+    // 수정 모드: 새 경로를 선택하지 않았으면 기존 recoId 사용
+    final int recoId;
+    if (_selectedRouteIndex != null) {
+      recoId = _routes[_selectedRouteIndex!].recoId ?? _selectedRouteIndex!;
+    } else if (widget.editRoutine?.route?.recoId != null && widget.editRoutine!.route!.recoId > 0) {
+      recoId = widget.editRoutine!.route!.recoId;
+    } else {
+      // 신규 등록인데 경로 미선택
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('경로를 선택해주세요.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
     final request = CreateRoutineRequest(
       routineName: routineName,
       targetArrivalTime: _arrivalTimeStr,
@@ -158,7 +181,7 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
       origin: _departure!.address,
       destinationAlias: _arrival!.name,
       destination: _arrival!.address,
-      recoId: selectedRoute.recoId ?? _selectedRouteIndex!,
+      recoId: recoId,
       days: _selectedDays.toList(),
     );
     try {
@@ -171,8 +194,12 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
       }
       // ✅ 루틴 생성/수정 후 홈 화면 추천 경로 재조회
       if (mounted) {
-        ref.read(homeProvider.notifier).refresh();
-        context.pop();
+        // routineDetailProvider 캐시 무효화 (수정 즉시 반영)
+        ref.invalidate(routineDetailProvider);
+        ref.invalidate(routineListProvider);
+        // homeProvider 갱신 후 pop (await로 완료 보장)
+        await ref.read(homeProvider.notifier).refresh();
+        if (mounted) context.pop();
       }
     } on DioException catch (e) {
       if (!mounted) return;
@@ -813,16 +840,24 @@ class _AddressPickerField extends ConsumerWidget {
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (ctx) => _AddAddressSheet(
-        onSave: (name, address, lat, lng) async {
-          final newAddr =
-              await ref.read(routineRepositoryProvider).addAddress(
-                    name: name,
-                    address: address,
-                    latitude: lat,   // null until backend geocoding
-                    longitude: lng,  // null until backend geocoding
-                  );
-          ref.invalidate(addressListProvider);
-          if (ctx.mounted) Navigator.pop(ctx, newAddr);
+        onSave: (name, roadAddress, jibunAddress, lat, lng) async {
+          try {
+            final apiClient = ref.read(apiClientProvider);
+            final res = await apiClient.dio.post('/address', data: {
+              'name': name,
+              'roadAddress': roadAddress,
+              'jibunAddress': jibunAddress,
+            });
+            final newAddr = AddressModel.fromJson(res.data as Map<String, dynamic>);
+            ref.invalidate(addressListProvider);
+            if (ctx.mounted) Navigator.pop(ctx, newAddr);
+          } catch (e) {
+            if (ctx.mounted) {
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                SnackBar(content: Text('주소 저장에 실패했어요: $e'), backgroundColor: Colors.red),
+              );
+            }
+          }
         },
       ),
     );
@@ -1413,7 +1448,7 @@ class _SummaryItem extends StatelessWidget {
 
 // ── 새 주소 추가 바텀 시트 ────────────────────────────
 class _AddAddressSheet extends StatefulWidget {
-  final Future<void> Function(String name, String address, double? lat, double? lng) onSave;
+  final Future<void> Function(String name, String roadAddress, String jibunAddress, double? lat, double? lng) onSave;
   const _AddAddressSheet({required this.onSave});
 
   @override
@@ -1435,11 +1470,10 @@ class _AddAddressSheetState extends State<_AddAddressSheet> {
   }
 
   Future<void> _searchAddress() async {
-    final result = await Navigator.push<KakaoPostcodeResult>(
-      context,
+    final result = await Navigator.of(context, rootNavigator: true).push<KakaoPostcodeResult>(
       MaterialPageRoute(builder: (_) => const KakaoPostcodePage()),
     );
-    if (result != null) setState(() => _kakaoResult = result);
+    if (result != null && mounted) setState(() => _kakaoResult = result);
   }
 
   Future<void> _save() async {
@@ -1455,7 +1489,13 @@ class _AddAddressSheetState extends State<_AddAddressSheet> {
       final fullAddress = detail.isEmpty
           ? _kakaoResult!.roadAddress
           : '${_kakaoResult!.roadAddress} $detail';
-      await widget.onSave(_nameCtrl.text.trim(), fullAddress, null, null);
+      await widget.onSave(
+        _nameCtrl.text.trim(),
+        fullAddress,
+        _kakaoResult!.jibunAddress,
+        null,
+        null,
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }

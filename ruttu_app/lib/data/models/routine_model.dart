@@ -12,6 +12,8 @@ class RoutineModel {
   final List<String> days;               // ["MON","TUE",...]
   final bool isActive;
   final RouteModel? route;               // 상세 조회 시에만 포함 (RoutineDetailDto.route)
+  /// preActive 지도 경로 폴리라인용 XY 좌표 (RoutineDetailDto.routeXy)
+  final List<RouteXYModel> routeXy;
 
   const RoutineModel({
     required this.routineId,
@@ -24,6 +26,7 @@ class RoutineModel {
     required this.days,
     this.isActive = true,
     this.route,
+    this.routeXy = const [],
   });
 
   factory RoutineModel.fromJson(Map<String, dynamic> json) => RoutineModel(
@@ -48,6 +51,11 @@ class RoutineModel {
         route: json['route'] != null
             ? RouteModel.fromJson(json['route'] as Map<String, dynamic>)
             : null,
+        // 백엔드 RoutineDetailDto.routeXy 파싱
+        routeXy: (json['routeXy'] as List<dynamic>?)
+                ?.map((e) => RouteXYModel.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
       );
 
   static String _formatTime(dynamic value) {

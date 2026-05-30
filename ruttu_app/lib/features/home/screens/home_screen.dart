@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:geolocator/geolocator.dart';
@@ -1553,6 +1554,18 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
   late TabController _tabController;
   NaverMapController? _mapController;
 
+  /// routeCoordinates 중 첫 번째 유효 좌표를 초기 카메라 위치로 반환.
+  /// 유효 좌표가 없으면 null 반환 → null이면 현재 위치로 이동.
+  NCameraPosition? _initialCameraPosition() {
+    final coords = widget.home.routeCoordinates;
+    for (final c in coords) {
+      if (c.hasCoord) {
+        return NCameraPosition(target: NLatLng(c.y!, c.x!), zoom: 14);
+      }
+    }
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1747,13 +1760,14 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
         children: [
           NaverMap(
             key: const ValueKey('preactive_map'),
-            options: const NaverMapViewOptions(
-              initialCameraPosition: NCameraPosition(
-                target: NLatLng(37.5665, 126.9780),
-                zoom: 14,
-              ),
+            options: NaverMapViewOptions(
+              initialCameraPosition: _initialCameraPosition() ??
+                  const NCameraPosition(
+                    target: NLatLng(37.5665, 126.9780), // 좌표 없을 때 fallback
+                    zoom: 14,
+                  ),
               mapType: NMapType.basic,
-              activeLayerGroups: [NLayerGroup.transit],
+              activeLayerGroups: const [NLayerGroup.transit],
             ),
             onMapReady: (controller) {
               _mapController = controller;
@@ -1949,19 +1963,88 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   NaverMapController? _mapController;
+  StreamSubscription<Position>? _gpsSub;
+  Position? _currentGpsPosition;
+  bool _routeDrawn = false; // ✅ 경로 폴리라인이 그려졌는지 추적
+
+  /// routeCoordinates 중 현재 구간(idx) 이후 첫 번째 유효 좌표를 초기 카메라 위치로 반환.
+  /// 없으면 null → 현재 위치로 이동.
+  NCameraPosition? _initialCameraPosition() {
+    final coords = widget.home.routeCoordinates;
+    final idx = widget.home.currentStepIndex;
+    // 현재 구간부터 탐색, 없으면 전체에서 탐색
+    final searchList = idx < coords.length ? coords.skip(idx) : coords;
+    for (final c in searchList) {
+      if (c.hasCoord) {
+        return NCameraPosition(target: NLatLng(c.y!, c.x!), zoom: 15);
+      }
+    }
+    for (final c in coords) {
+      if (c.hasCoord) {
+        return NCameraPosition(target: NLatLng(c.y!, c.x!), zoom: 15);
+      }
+    }
+    return null;
+  }
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _startGpsStream();
+  }
+
+  void _startGpsStream() {
+    _gpsSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5, // 5m 이상 이동할 때만 갱신
+      ),
+    ).listen((pos) {
+      _currentGpsPosition = pos;
+      // 지도가 준비된 상태면 마커만 갱신 (경로 폴리라인은 유지)
+      if (_mapController != null) {
+        _updateGpsMarkerOnly(_mapController!, pos);
+      }
+    }, onError: (_) {});
+  }
+
+  /// GPS 마커 + 카메라 갱신. 경로가 아직 안 그려진 경우 전체 경로도 그린다.
+  Future<void> _updateGpsMarkerOnly(NaverMapController controller, Position pos) async {
+    try {
+      // 경로가 아직 안 그려진 경우 전체 재드로우 (GPS 이벤트가 onMapReady보다 늦을 수 있음)
+      if (!_routeDrawn) {
+        await _drawRouteOnMap(controller, widget.home.routeCoordinates);
+        return; // _drawRouteOnMap 내부에서 GPS 마커 + 카메라도 처리
+      }
+
+      // 경로는 이미 그려진 상태 → GPS 마커와 카메라만 갱신
+      final target = NLatLng(pos.latitude, pos.longitude);
+      final marker = NMarker(id: 'gps_pos', position: target);
+      marker.setCaption(const NOverlayCaption(
+        text: '현재 위치',
+        textSize: 11,
+        color: Color(0xFF1A73E8),
+      ));
+      await controller.addOverlay(marker);
+      await controller.updateCamera(
+        NCameraUpdate.scrollAndZoomTo(target: target, zoom: 15),
+      );
+    } catch (_) {}
   }
 
   @override
   void didUpdateWidget(_ActiveView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 좌표가 바뀌면 지도 폴리라인 다시 그리기
-    if (_mapController != null &&
-        widget.home.routeCoordinates != oldWidget.home.routeCoordinates) {
+    // 좌표/구간/section이 바뀌면 지도 다시 그리기
+    final coordsChanged =
+        widget.home.routeCoordinates != oldWidget.home.routeCoordinates;
+    final stepChanged =
+        widget.home.currentStepIndex != oldWidget.home.currentStepIndex;
+    final sectionChanged =
+        widget.home.currentSectionData?.idx != oldWidget.home.currentSectionData?.idx;
+
+    if (_mapController != null && (coordsChanged || stepChanged || sectionChanged)) {
       _drawRouteOnMap(_mapController!, widget.home.routeCoordinates);
     }
   }
@@ -1991,133 +2074,127 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     NaverMapController controller,
     List<RouteXYModel> coords,
   ) async {
-    if (coords.isEmpty) return;
-
     await controller.clearOverlays();
+    _routeDrawn = false;
 
-    // 유효 좌표만 추출 (null 좌표 건너뜀)
-    final validCoords = coords.where((c) => c.hasCoord).toList();
-    if (validCoords.isEmpty) return;
+    final section = widget.home.currentSectionData;
+    // idx = 도착 예정 구간 인덱스 (현재 이동 중 구간 = idx - 1)
+    final currentIdx = section != null ? (section.idx - 1).clamp(0, coords.length - 1) : -1;
 
-    // 전체 경로를 하나의 NLatLng 목록으로 만든 뒤 type별로 색상 분할
-    // → walk 구간은 앞뒤 정류장 사이를 직선으로 이어붙임
-    // → 연속된 좌표 목록을 type별 세그먼트로 그룹핑
-    final allPoints = <({NLatLng pt, String type})>[];
+    // ── 1. 좌표 포인트 수집 ─────────────────────────────────
+    final allPoints = <({NLatLng pt, String type, int xyIdx})>[];
     for (var i = 0; i < coords.length; i++) {
       final c = coords[i];
       if (c.hasCoord) {
-        allPoints.add((pt: NLatLng(c.y!, c.x!), type: c.type ?? 'walk'));
+        allPoints.add((pt: NLatLng(c.y!, c.x!), type: c.type ?? 'walk', xyIdx: i));
       } else if (c.type == 'walk') {
-        // walk이고 좌표 없음 → 앞뒤 유효점 사이 중간점 추가 (자연스러운 연결)
-        // 앞 유효 좌표
         NLatLng? prev;
         for (var j = i - 1; j >= 0; j--) {
-          if (coords[j].hasCoord) {
-            prev = NLatLng(coords[j].y!, coords[j].x!);
-            break;
-          }
+          if (coords[j].hasCoord) { prev = NLatLng(coords[j].y!, coords[j].x!); break; }
         }
-        // 뒤 유효 좌표
         NLatLng? next;
         for (var j = i + 1; j < coords.length; j++) {
-          if (coords[j].hasCoord) {
-            next = NLatLng(coords[j].y!, coords[j].x!);
-            break;
+          if (coords[j].hasCoord) { next = NLatLng(coords[j].y!, coords[j].x!); break; }
+        }
+        if (prev != null && allPoints.isEmpty) allPoints.add((pt: prev, type: 'walk', xyIdx: i));
+        if (next != null) allPoints.add((pt: next, type: 'walk', xyIdx: i));
+      }
+    }
+
+    // ── 2. 세그먼트 분리 후 폴리라인 그리기 ─────────────────
+    if (allPoints.length >= 2) {
+      final segments = <({String type, List<NLatLng> points, bool isPast})>[];
+      String currentType = allPoints.first.type;
+      bool isPast = allPoints.first.xyIdx < currentIdx;
+      List<NLatLng> currentPoints = [allPoints.first.pt];
+
+      for (var i = 1; i < allPoints.length; i++) {
+        final item = allPoints[i];
+        final itemPast = item.xyIdx < currentIdx;
+        if (item.type != currentType || itemPast != isPast) {
+          if (currentPoints.length >= 2) {
+            segments.add((type: currentType, points: List.of(currentPoints), isPast: isPast));
           }
-        }
-        // prev → next 직선 연결을 위해 양쪽 끝점만 추가 (중복 없이)
-        if (prev != null && allPoints.isEmpty) {
-          allPoints.add((pt: prev, type: 'walk'));
-        }
-        if (next != null) {
-          allPoints.add((pt: next, type: 'walk'));
+          currentType = item.type;
+          isPast = itemPast;
+          currentPoints = [currentPoints.last, item.pt];
+        } else {
+          currentPoints.add(item.pt);
         }
       }
-    }
-
-    if (allPoints.length < 2) return;
-
-    // type별 연속 세그먼트 그룹핑
-    final segments = <({String type, List<NLatLng> points})>[];
-    String currentType = allPoints.first.type;
-    List<NLatLng> currentPoints = [allPoints.first.pt];
-
-    for (var i = 1; i < allPoints.length; i++) {
-      final item = allPoints[i];
-      if (item.type != currentType) {
-        if (currentPoints.length >= 2) {
-          segments.add((type: currentType, points: List.of(currentPoints)));
-        }
-        // 경계 연결: 이전 마지막 점을 새 세그먼트 첫 점으로
-        currentType = item.type;
-        currentPoints = [currentPoints.last, item.pt];
-      } else {
-        currentPoints.add(item.pt);
+      if (currentPoints.length >= 2) {
+        segments.add((type: currentType, points: List.of(currentPoints), isPast: isPast));
       }
-    }
-    if (currentPoints.length >= 2) {
-      segments.add((type: currentType, points: List.of(currentPoints)));
-    }
 
-    Color typeColor(String type) {
-      switch (type) {
-        case 'subway':
-          return Colors.blue;
-        case 'bus':
-          return const Color(0xFF22C55E); // 초록
-        default:
-          return const Color(0xFF9CA3AF); // 도보: 회색 점선 느낌
+      Color segColor(String type, bool past) {
+        if (past) return const Color(0xFFCBD5E1); // 지나온 구간: 연회색
+        return switch (type) {
+          'subway' => Colors.blue,
+          'bus'    => const Color(0xFF22C55E),
+          _        => const Color(0xFF9CA3AF),
+        };
+      }
+      double segWidth(String type, bool past) => past ? 4.0 : (type == 'walk' ? 3.0 : 6.0);
+
+      for (var i = 0; i < segments.length; i++) {
+        final seg = segments[i];
+        if (seg.points.length < 2) continue;
+        await controller.addOverlay(
+          NPolylineOverlay(
+            id: 'seg_$i',
+            coords: seg.points,
+            color: segColor(seg.type, seg.isPast),
+            width: segWidth(seg.type, seg.isPast),
+          ),
+        );
       }
     }
 
-    double typeWidth(String type) => type == 'walk' ? 3.0 : 6.0;
-
-    for (var i = 0; i < segments.length; i++) {
-      final seg = segments[i];
-      if (seg.points.length < 2) continue;
-      await controller.addOverlay(
-        NPolylineOverlay(
-          id: 'seg_$i',
-          coords: seg.points,
-          color: typeColor(seg.type),
-          width: typeWidth(seg.type),
-        ),
-      );
-    }
-
-    // 현재 위치 마커 — idx 기준으로 유효 좌표 찾기
-    final curIdx = widget.home.currentStepIndex;
-    RouteXYModel? curPoint;
-    // idx 근처에서 유효 좌표 탐색
-    for (var offset = 0; offset < coords.length; offset++) {
-      final fwd = curIdx + offset;
-      final bwd = curIdx - offset;
-      if (fwd < coords.length && coords[fwd].hasCoord) {
-        curPoint = coords[fwd];
-        break;
-      }
-      if (bwd >= 0 && coords[bwd].hasCoord) {
-        curPoint = coords[bwd];
-        break;
+    // ── 3. getCurrentSection xy[idx] → 현재 위치 마커 ────────
+    NLatLng? sectionTarget;
+    if (section != null && section.idx < coords.length) {
+      final xyPoint = coords[section.idx];
+      if (xyPoint.hasCoord) {
+        sectionTarget = NLatLng(xyPoint.y!, xyPoint.x!);
+        final stationName = xyPoint.stationName;
+        final sectionMarker = NMarker(id: 'section_pos', position: sectionTarget);
+        sectionMarker.setCaption(NOverlayCaption(
+          text: stationName != null && stationName.isNotEmpty ? stationName : '현재 위치',
+          textSize: 12,
+          color: const Color(0xFFE65100),
+        ));
+        await controller.addOverlay(sectionMarker);
       }
     }
-    if (curPoint != null) {
-      await controller.addOverlay(
-        NMarker(id: 'current_pos', position: NLatLng(curPoint.y!, curPoint.x!)),
-      );
-      // 현재 위치로 카메라 이동
+
+    // ── 4. GPS 현재 위치 마커 ────────────────────────────────
+    NLatLng? gpsTarget;
+    if (_currentGpsPosition != null) {
+      gpsTarget = NLatLng(_currentGpsPosition!.latitude, _currentGpsPosition!.longitude);
+      final marker = NMarker(id: 'gps_pos', position: gpsTarget);
+      marker.setCaption(const NOverlayCaption(
+        text: '현재 위치',
+        textSize: 11,
+        color: Color(0xFF1A73E8),
+      ));
+      await controller.addOverlay(marker);
+    }
+
+    // ── 5. 카메라: GPS 우선, 없으면 section 위치로 이동 ──────
+    final cameraTarget = gpsTarget ?? sectionTarget;
+    if (cameraTarget != null) {
       await controller.updateCamera(
-        NCameraUpdate.scrollAndZoomTo(
-          target: NLatLng(curPoint.y!, curPoint.x!),
-          zoom: 15,
-        ),
+        NCameraUpdate.scrollAndZoomTo(target: cameraTarget, zoom: 15),
       );
     }
+
+    _routeDrawn = true;
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _gpsSub?.cancel();
     super.dispose();
   }
 
@@ -2132,21 +2209,19 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
         children: [
           NaverMap(
             key: const ValueKey('active_map'),
-            options: const NaverMapViewOptions(
-              initialCameraPosition: NCameraPosition(
-                target: NLatLng(37.5665, 126.9780),
-                zoom: 14,
-              ),
+            options: NaverMapViewOptions(
+              initialCameraPosition: _initialCameraPosition() ??
+                  const NCameraPosition(
+                    target: NLatLng(37.5665, 126.9780), // 좌표 없을 때 fallback
+                    zoom: 14,
+                  ),
               mapType: NMapType.basic,
-              activeLayerGroups: [NLayerGroup.transit],
+              activeLayerGroups: const [NLayerGroup.transit],
             ),
             onMapReady: (controller) {
               _mapController = controller;
-              _moveToCurrentLocation(controller);
-              // 좌표가 이미 있으면 바로 경로 그리기
-              if (widget.home.routeCoordinates.isNotEmpty) {
-                _drawRouteOnMap(controller, widget.home.routeCoordinates);
-              }
+              // 좌표 있으면 경로 + 마커, 없으면 현재 GPS 마커만 표시
+              _drawRouteOnMap(controller, widget.home.routeCoordinates);
             },
           ),
           SafeArea(
@@ -2219,6 +2294,10 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                                 widget.home.liveStatus?.status ?? '도보 중',
                             stepRemainingMinutes:
                                 widget.home.stepRemainingMinutes,
+                            stopsRemaining: widget.home.stopsRemaining,
+                            currentStationName: widget.home.currentStationName,
+                            isWalking: widget.home.isWalking,
+                            sectionData: widget.home.currentSectionData,
                             onStop: () =>
                                 widget.onStopTap(widget.home.activeRoutine),
                           ),
@@ -2518,13 +2597,40 @@ class _PreActivePanelState extends State<_PreActivePanel> {
   }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class _ActivePanel extends StatelessWidget {
   final RoutineModel routine;
   final LiveRouteModel? route;
   final int currentStepIndex;
   final String liveStatusText;
   final int stepRemainingMinutes;
+  final int? stopsRemaining;
+  final String? currentStationName;
+  final bool isWalking;
   final VoidCallback onStop;
+  final CurrentSectionModel? sectionData;
 
   const _ActivePanel({
     required this.routine,
@@ -2533,6 +2639,10 @@ class _ActivePanel extends StatelessWidget {
     required this.liveStatusText,
     required this.stepRemainingMinutes,
     required this.onStop,
+    this.stopsRemaining,
+    this.currentStationName,
+    this.isWalking = false,
+    this.sectionData,
   });
 
   static IconData _statusIcon(String status) {
@@ -2551,16 +2661,153 @@ class _ActivePanel extends StatelessWidget {
     return AppColors.success;
   }
 
+  /// 하차 알림 배너 — 버스/지하철: 정거장 기반, 도보: 다음 정류장 안내
+  Widget? _stopAlertBanner() {
+    // ✅ 도보 중일 때: 다음 정류장 이름 안내
+    if (isWalking) {
+      if (currentStationName == null) return null;
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE8F5E9),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.green.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.directions_walk, size: 18, color: Colors.green),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '도보 이동 중',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.green,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '다음 승차 위치: $currentStationName',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.green.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // ✅ 버스/지하철 중: 남은 정거장 기반 하차 알림
+    final stops = stopsRemaining;
+    if (stops == null || stops > 2) {
+      // 2개 초과여도 현재 정류장 이름은 표시
+      if (currentStationName != null) {
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.blue.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.place_outlined, size: 16, color: Colors.blue),
+              const SizedBox(width: 8),
+              Text(
+                '현재 위치: $currentStationName${stops != null ? "  ·  $stops정거장 남음" : ""}',
+                style: const TextStyle(fontSize: 12, color: Colors.blue),
+              ),
+            ],
+          ),
+        );
+      }
+      return null;
+    }
+
+    final bool isUrgent = stops <= 1;
+    final color = isUrgent ? Colors.orange : const Color(0xFFF59E0B);
+    final bgColor = isUrgent
+        ? Colors.orange.withValues(alpha: 0.12)
+        : const Color(0xFFFEF3C7);
+    final borderColor = isUrgent
+        ? Colors.orange.withValues(alpha: 0.5)
+        : const Color(0xFFF59E0B).withValues(alpha: 0.5);
+
+    final String message = stops == 0
+        ? '🔔 다음 정류장에서 하차하세요!'
+        : stops == 1
+            ? '⚠️ 1정거장 후 하차 — 준비하세요'
+            : '🔔 2정거장 후 하차 예정입니다';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.notifications_active_rounded, size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: color,
+                  ),
+                ),
+                // ✅ 현재 위치 항상 표시 (정류장 이름이 있을 때)
+                if (currentStationName != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '현재 위치: $currentStationName',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: color.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final paths = route?.path ?? [];
     final statusColor = _statusColor(liveStatusText);
+    final banner = _stopAlertBanner();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 하차 알림 배너 (2정거장 이하일 때만)
+          if (banner != null) ...[
+            banner,
+            const SizedBox(height: 10),
+          ],
           Row(
             children: [
               Container(
@@ -2592,7 +2839,16 @@ class _ActivePanel extends StatelessWidget {
                   ],
                 ),
               ),
-              if (stepRemainingMinutes > 0) ...[
+              if (stopsRemaining != null && stopsRemaining! > 2) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '$stopsRemaining정거장 남음',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ] else if (stepRemainingMinutes > 0 && stopsRemaining == null) ...[
                 const SizedBox(width: 8),
                 Text(
                   '이 구간 $stepRemainingMinutes분 남음',
@@ -2605,7 +2861,7 @@ class _ActivePanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          _RoutineStepDots(paths: paths, currentStep: currentStepIndex),
+          _RoutineStepDots(paths: paths, currentStep: currentStepIndex, sectionData: sectionData),
           const SizedBox(height: 16),
           Row(
             children: [
@@ -2655,6 +2911,10 @@ class _ActivePanel extends StatelessWidget {
                 path: entry.value,
                 isCurrent: entry.key == currentStepIndex,
                 isLast: entry.key == paths.length - 1,
+                // ✅ 현재 구간일 때만 현재 정류장 이름 전달 (하이라이트용)
+                currentStationName: entry.key == currentStepIndex
+                    ? currentStationName
+                    : null,
               ),
             ),
           ],
@@ -3560,22 +3820,71 @@ class _StarRatingRow extends StatelessWidget {
 class _RoutineStepDots extends StatelessWidget {
   final List<PathModel> paths;
   final int currentStep;
-  const _RoutineStepDots({required this.paths, required this.currentStep});
+  final CurrentSectionModel? sectionData;
+  const _RoutineStepDots({
+    required this.paths,
+    required this.currentStep,
+    this.sectionData,
+  });
+
+  /// section 배열(["walk","bus","bus","bus","walk"])을 압축해
+  /// 레이블 목록("도보","버스","도착")을 만들고 현재 위치도 계산.
+  List<String> _sectionLabels() {
+    final raw = sectionData?.section ?? [];
+    if (raw.isEmpty) return [];
+    final compressed = <String>[];
+    for (final t in raw) {
+      if (compressed.isEmpty || compressed.last != t) compressed.add(t);
+    }
+    return compressed.map((t) => switch (t) {
+      'bus'    => '버스',
+      'subway' => '지하철',
+      _        => '도보',
+    }).toList()..add('도착');
+  }
+
+  /// section.idx (도착 예정 구간) → 압축 후 현재 인덱스
+  int _sectionCurrentStep() {
+    final sec = sectionData;
+    if (sec == null) return currentStep;
+    final raw = sec.section;
+    final currentRawIdx = (sec.idx - 1).clamp(0, raw.length - 1);
+    String? prev;
+    int ci = 0;
+    for (var i = 0; i <= currentRawIdx && i < raw.length; i++) {
+      final t = raw[i];
+      if (t != prev) { if (prev != null) ci++; prev = t; }
+    }
+    return ci;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final labels =
-        paths.isEmpty
-              ? ['도보', '지하철', '환승', '버스', '도착']
-              : paths.map((p) => p.typeLabel).toList()
-          ..add('도착');
+    // section 데이터 우선, 없으면 paths 기반
+    final sectionLabels = _sectionLabels();
+    final labels = sectionLabels.isNotEmpty
+        ? sectionLabels
+        : (paths.isEmpty ? null : (paths.map((p) => p.typeLabel).toList()..add('도착')));
+    final effectiveStep = sectionLabels.isNotEmpty ? _sectionCurrentStep() : currentStep;
+
+    if (labels == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Center(
+          child: Text(
+            '구간 정보를 불러오는 중...',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+        ),
+      );
+    }
 
     return Row(
       children: labels.asMap().entries.map((entry) {
         final i = entry.key;
         final label = entry.value;
-        final isDone = i < currentStep;
-        final isCurrent = i == currentStep;
+        final isDone = i < effectiveStep;
+        final isCurrent = i == effectiveStep;
         final isLast = i == labels.length - 1;
 
         return Expanded(
@@ -3649,11 +3958,13 @@ class _PathItem extends StatefulWidget {
   final PathModel path;
   final bool isCurrent;
   final bool isLast;
+  final String? currentStationName; // ✅ 현재 위치 정류장 이름 (하이라이트용)
 
   const _PathItem({
     required this.path,
     required this.isCurrent,
     this.isLast = false,
+    this.currentStationName,
   });
 
   @override
@@ -3661,7 +3972,23 @@ class _PathItem extends StatefulWidget {
 }
 
 class _PathItemState extends State<_PathItem> {
-  bool _expanded = false;
+  late bool _expanded;
+
+  @override
+  void initState() {
+    super.initState();
+    // ✅ 현재 구간(버스/지하철)은 자동으로 정류장 목록 펼치기
+    _expanded = widget.isCurrent && !widget.path.isWalking;
+  }
+
+  @override
+  void didUpdateWidget(_PathItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 현재 구간으로 바뀌면 자동 펼치기
+    if (widget.isCurrent && !widget.path.isWalking && !_expanded) {
+      setState(() => _expanded = true);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3849,29 +4176,76 @@ class _PathItemState extends State<_PathItem> {
                     if (_expanded) ...[
                       const SizedBox(height: 6),
                       ...path.stationName.map(
-                        (station) => Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 3),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 6,
-                                height: 6,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: color.withValues(alpha: 0.5),
+                        (station) {
+                          // ✅ 현재 위치 정류장 하이라이트
+                          final isCurrentStation =
+                              widget.currentStationName != null &&
+                              station == widget.currentStationName;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: Row(
+                              children: [
+                                // 현재 위치면 펄스 아이콘, 아니면 점
+                                if (isCurrentStation)
+                                  Container(
+                                    width: 18,
+                                    height: 18,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: color,
+                                    ),
+                                    child: const Icon(
+                                      Icons.my_location,
+                                      size: 10,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                else
+                                  Container(
+                                    width: 6,
+                                    height: 6,
+                                    margin: const EdgeInsets.only(left: 6),
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: color.withValues(alpha: 0.5),
+                                    ),
+                                  ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    station,
+                                    style: TextStyle(
+                                      fontSize: isCurrentStation ? 13 : 12,
+                                      fontWeight: isCurrentStation
+                                          ? FontWeight.w700
+                                          : FontWeight.normal,
+                                      color: isCurrentStation
+                                          ? color
+                                          : AppColors.textSecondary,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                station,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: AppColors.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                                if (isCurrentStation)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: color.withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      '현재',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        color: color,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ],

@@ -22,8 +22,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
   /// 실시간 폴링 타이머 (active 상태에서 주기적으로 백엔드 조회)
   Timer? _liveTimer;
 
-  /// 폴링 주기 — 10초마다 status / section / recoRoute 갱신
-  static const _pollInterval = Duration(seconds: 10);
+  /// 폴링 주기 — 5초마다 status / section / recoRoute 갱신
+  static const _pollInterval = Duration(seconds: 5);
 
   HomeNotifier(this._repository) : super(const HomeState());
 
@@ -108,6 +108,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
         weather: weather,
         myRoute: myRoute,
         recommendedRoute: recommendedRoute,
+        // ✅ 루틴 상세에서 내려온 routeXy로 preActive 지도 경로 즉시 표시
+        routeCoordinates: todayRoutineDetail.routeXy,
       );
     } catch (e) {
       debugPrint('❌ initialize 실패: $e');
@@ -150,9 +152,19 @@ class HomeNotifier extends StateNotifier<HomeState> {
       debugPrint('[startRoute] getLiveStatus 실패 (무시됨): $e');
     }
 
-    final stepIndex = section?.idx ?? 0;
+    final stepIndex = section != null && route != null
+        ? _resolvePathIndex(section, route.path.length)
+        : 0;
+
+    debugPrint('[startRoute] section.idx=${section?.idx}, section.section=${section?.section}, '
+        'path.length=${route?.path.length}, resolved stepIndex=$stepIndex');
 
     // route가 없어도 active 상태로 전환 (경로 없이도 이동 시작 가능)
+    // section.xy가 없으면 preActive에서 받아온 routeXy 유지
+    final newCoords = (section?.xy.isNotEmpty == true)
+        ? section!.xy
+        : state.routeCoordinates; // preActive 때 routeXy가 들어있음
+
     state = state.copyWith(
       status: HomeStatus.active,
       myRoute: route,
@@ -161,8 +173,9 @@ class HomeNotifier extends StateNotifier<HomeState> {
       currentStepIndex: stepIndex,
       stepRemainingMinutes: route != null ? _remainingMinutes(route, stepIndex) : 0,
       liveStatus: liveStatus,
-      routeCoordinates: section?.xy ?? const [],
+      routeCoordinates: newCoords,
       departureTime: DateTime.now(),
+      currentSectionData: section,
     );
 
     _startPolling();
@@ -188,9 +201,23 @@ class HomeNotifier extends StateNotifier<HomeState> {
       // 현재 상태 (도보중 / 대기중 / 탑승중)
       final liveStatus = await _repository.getLiveStatus();
 
-      // 현재 구간 인덱스
-      final section = await _repository.getCurrentSection();
-      final stepIndex = section?.idx ?? state.currentStepIndex;
+      // 현재 구간 인덱스 — /location API 우선, 실패 시 기존 유지
+      CurrentSectionModel? section;
+      try {
+        section = await _repository.getCurrentSection();
+      } catch (e) {
+        debugPrint('[LivePoll] getCurrentSection 실패 (무시됨): $e');
+      }
+
+      // section이 유효하면 idx 사용, 아니면 기존 유지
+      final myRoute = state.myRoute;
+      final stepIndex = (section != null && myRoute != null)
+          ? _resolvePathIndex(section, myRoute.path.length)
+          : state.currentStepIndex;
+
+      // routeCoordinates: section이 non-null이면 항상 갱신
+      // (빈 xy도 유효한 응답 — 서버가 좌표 없다고 알려주는 것)
+      final newCoords = section != null ? section.xy : state.routeCoordinates;
 
       // 추천 경로 — 실시간으로 최신 추천 반영
       LiveRouteModel? recoRoute;
@@ -200,19 +227,17 @@ class HomeNotifier extends StateNotifier<HomeState> {
         recoRoute = state.recommendedRoute; // 실패 시 기존 유지
       }
 
-      final myRoute = state.myRoute;
-
       state = state.copyWith(
         liveStatus: liveStatus,
         recommendedRoute: recoRoute,
         currentStepIndex: stepIndex,
         stepRemainingMinutes:
             myRoute != null ? _remainingMinutes(myRoute, stepIndex) : 0,
-        // xy 좌표가 있으면 업데이트 (없으면 기존 유지)
-        routeCoordinates: (section != null && section.xy.isNotEmpty)
-            ? section.xy
-            : state.routeCoordinates,
+        routeCoordinates: newCoords,
+        currentSectionData: section ?? state.currentSectionData,
       );
+
+      debugPrint('[LivePoll] 갱신 완료 — status:${liveStatus.status} stepIdx:$stepIndex coords:${newCoords.length}개');
 
       // '도착' 상태면 폴링 종료
       if (liveStatus.status == '도착') {
@@ -230,6 +255,52 @@ class HomeNotifier extends StateNotifier<HomeState> {
     return route.path
         .skip(stepIndex)
         .fold(0, (sum, p) => sum + p.sectionTime);
+  }
+
+  /// section 배열(["walk","bus","bus","bus","walk"])에서
+  /// 연속된 동일 type을 하나로 합쳐 path 인덱스로 변환합니다.
+  ///
+  /// 예: section = ["walk","bus","bus","bus","bus","bus","bus","walk"], idx=1
+  ///     압축 → ["walk","bus","walk"]  (0,1,2)
+  ///     idx=1 → section[1]="bus" → 압축 후 인덱스 1 → pathIdx=1
+  /// idx = 도착 예정 구간 인덱스 (raw section 배열 기준).
+  /// 현재 이동 중인 구간 = idx - 1.
+  /// path 인덱스는 raw section을 run-length 압축한 결과 기준.
+  int _resolvePathIndex(CurrentSectionModel section, int pathLength) {
+    if (pathLength == 0) return 0;
+
+    final raw = section.section; // ["walk","bus","bus",...,"walk"]
+    // idx는 도착 예정 → 현재 구간 = idx - 1
+    final currentRawIdx = (section.idx - 1).clamp(0, raw.length - 1);
+
+    if (raw.isEmpty) return currentRawIdx.clamp(0, pathLength - 1);
+
+    // 연속 중복 제거 (run-length 압축)
+    final compressed = <String>[];
+    for (final type in raw) {
+      if (compressed.isEmpty || compressed.last != type) {
+        compressed.add(type);
+      }
+    }
+
+    // 현재 구간(currentRawIdx)이 압축 후 어느 인덱스인지 계산
+    final targetType = raw[currentRawIdx];
+
+    // raw[0..currentRawIdx] 까지 순회하며 type 변화 횟수로 압축 인덱스 결정
+    String? prevType;
+    int compressedIdx = 0;
+    for (var i = 0; i <= currentRawIdx && i < raw.length; i++) {
+      final t = raw[i];
+      if (t != prevType) {
+        if (prevType != null) compressedIdx++;
+        prevType = t;
+      }
+    }
+
+    debugPrint('[resolvePathIndex] raw=${raw.length}개 → compressed=${compressed.length}개 '
+        'rawIdx=$currentRawIdx (idx=${section.idx}-1) → pathIdx=$compressedIdx (pathLength=$pathLength)');
+
+    return compressedIdx.clamp(0, pathLength - 1);
   }
 
   /// GPS가 목적지 반경 내에 진입했을 때 호출됩니다.

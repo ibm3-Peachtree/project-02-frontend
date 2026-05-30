@@ -35,7 +35,8 @@ class ApiConstants {
   static const liveMyRoute        = '/me/routines/active/route';
   static const liveRecoRoute      = '/me/routines/active/reco';
   static const liveCurrentSection = '/me/routines/active/location';
-  static const liveLocation       = '/me/routines/active/location';
+  // PATCH /me/routines/active — LiveLocationController 실제 endpoint
+  static const liveLocation       = '/me/routines/active';
   static const routineComplete    = '/me/routines/active/complete';
   static const todayIssues        = '/me/issues';
 

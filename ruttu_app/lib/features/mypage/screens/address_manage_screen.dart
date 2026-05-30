@@ -1,33 +1,104 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/kakao_postcode_page.dart';
+import '../../../data/models/address_model.dart';
+import '../../auth/providers/network_provider.dart';
 
-class _AddressItem {
-  final int id;
-  final String name;
-  final String address;
+// ── 주소 목록 FutureProvider ───────────────────────────
+final _addressListProvider = FutureProvider.autoDispose<List<AddressModel>>((ref) async {
+  final res = await ref.read(apiClientProvider).dio.get('/address');
+  final list = res.data as List<dynamic>;
+  return list.map((e) => AddressModel.fromJson(e as Map<String, dynamic>)).toList();
+});
 
-  const _AddressItem(
-      {required this.id, required this.name, required this.address});
-}
-
-class AddressManageScreen extends StatefulWidget {
+class AddressManageScreen extends ConsumerWidget {
   const AddressManageScreen({super.key});
 
   @override
-  State<AddressManageScreen> createState() => _AddressManageScreenState();
-}
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncAddresses = ref.watch(_addressListProvider);
 
-class _AddressManageScreenState extends State<AddressManageScreen> {
-  final List<_AddressItem> _addresses = [
-    const _AddressItem(
-        id: 1, name: '집', address: '서울특별시 강남구 역삼동 123'),
-    const _AddressItem(
-        id: 2, name: '회사', address: '서울특별시 중구 을지로 100'),
-  ];
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        title: const Text('주소 관리',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        leading: const BackButton(),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await _showAddSheet(context, ref, null);
+            },
+            child: const Text('추가',
+                style: TextStyle(
+                    color: AppColors.primary, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+      body: asyncAddresses.when(
+        loading: () =>
+            const Center(child: CircularProgressIndicator()),
+        error: (e, _) =>
+            Center(child: Text('주소를 불러올 수 없어요: $e')),
+        data: (addresses) => addresses.isEmpty
+            ? _EmptyView(onAdd: () => _showAddSheet(context, ref, null))
+            : ListView(
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, 32 + MediaQuery.of(context).padding.bottom),
+                children: [
+                  ...addresses.map((a) => Card(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: ListTile(
+                          leading: const Icon(Icons.location_on_outlined,
+                              color: AppColors.primary),
+                          title: Text(a.name,
+                              style: const TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.w600)),
+                          subtitle: Text(a.roadAddress,
+                              style: const TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.textSecondary)),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit_outlined,
+                                    size: 20,
+                                    color: AppColors.textSecondary),
+                                onPressed: () =>
+                                    _showAddSheet(context, ref, a),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline,
+                                    size: 20,
+                                    color: AppColors.textSecondary),
+                                onPressed: () =>
+                                    _confirmDelete(context, ref, a),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )),
+                  const SizedBox(height: 8),
+                  OutlinedButton(
+                    onPressed: () => _showAddSheet(context, ref, null),
+                    style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        side: const BorderSide(color: AppColors.primary),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 14)),
+                    child: const Text('주소 추가하기'),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
 
-  void _showAddSheet({_AddressItem? editing}) {
-    showModalBottomSheet(
+  Future<void> _showAddSheet(
+      BuildContext context, WidgetRef ref, AddressModel? editing) async {
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
@@ -35,35 +106,37 @@ class _AddressManageScreenState extends State<AddressManageScreen> {
       ),
       builder: (ctx) => _AddressFormSheet(
         editing: editing,
-        onSave: (name, address) {
-          setState(() {
+        onSave: (name, roadAddress, jibunAddress) async {
+          final apiClient = ref.read(apiClientProvider);
+          try {
             if (editing != null) {
-              final idx = _addresses.indexWhere((a) => a.id == editing.id);
-              if (idx != -1) {
-                _addresses[idx] =
-                    _AddressItem(id: editing.id, name: name, address: address);
-              }
+              await apiClient.dio.put('/address/${editing.addressId}', data: {
+                'name': name,
+                'roadAddress': roadAddress,
+                'jibunAddress': jibunAddress,
+              });
             } else {
-              _addresses.add(_AddressItem(
-                id: DateTime.now().millisecondsSinceEpoch,
-                name: name,
-                address: address,
-              ));
+              await apiClient.dio.post('/address', data: {
+                'name': name,
+                'roadAddress': roadAddress,
+                'jibunAddress': jibunAddress,
+              });
             }
-          });
-          Navigator.pop(ctx);
+            ref.invalidate(_addressListProvider);
+            if (ctx.mounted) Navigator.pop(ctx);
+          } catch (e) {
+            if (ctx.mounted) {
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                  SnackBar(content: Text('저장에 실패했어요: $e')));
+            }
+          }
         },
-        onDelete: editing != null
-            ? () {
-                Navigator.pop(ctx);
-                _confirmDelete(editing);
-              }
-            : null,
       ),
     );
   }
 
-  void _confirmDelete(_AddressItem item) {
+  void _confirmDelete(
+      BuildContext context, WidgetRef ref, AddressModel item) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -79,134 +152,77 @@ class _AddressManageScreenState extends State<AddressManageScreen> {
             child: const Text('취소'),
           ),
           ElevatedButton(
-            onPressed: () {
-              setState(() =>
-                  _addresses.removeWhere((a) => a.id == item.id));
+            onPressed: () async {
               Navigator.pop(ctx);
+              try {
+                await ref.read(apiClientProvider).dio.delete('/address/${item.addressId}');
+                ref.invalidate(_addressListProvider);
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('삭제에 실패했어요: $e')));
+                }
+              }
             },
-            style:
-                ElevatedButton.styleFrom(backgroundColor: AppColors.error),
-            child: const Text('삭제',
-                style: TextStyle(color: Colors.white)),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
+            child:
+                const Text('삭제', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('주소 관리',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-        leading: const BackButton(),
-        actions: [
-          TextButton(
-            onPressed: () => _showAddSheet(),
-            child: const Text('추가',
-                style: TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-      body: _addresses.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.location_off_outlined,
-                      size: 64, color: AppColors.border),
-                  const SizedBox(height: 16),
-                  const Text('저장된 주소가 없어요',
-                      style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textSecondary)),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '자주 가는 장소를 등록하면\n루틴 설정이 편리해요',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 13, color: AppColors.textSecondary),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton(
-                    onPressed: () => _showAddSheet(),
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 32, vertical: 14)),
-                    child: const Text('주소 추가하기',
-                        style: TextStyle(color: Colors.white)),
-                  ),
-                ],
-              ),
-            )
-          : ListView(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 32 + MediaQuery.of(context).padding.bottom),
-              children: [
-                ..._addresses.map((a) => Card(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      child: ListTile(
-                        leading: const Icon(Icons.location_on_outlined,
-                            color: AppColors.primary),
-                        title: Text(a.name,
-                            style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600)),
-                        subtitle: Text(a.address,
-                            style: const TextStyle(
-                                fontSize: 13,
-                                color: AppColors.textSecondary)),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.edit_outlined,
-                                  size: 20,
-                                  color: AppColors.textSecondary),
-                              onPressed: () => _showAddSheet(editing: a),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline,
-                                  size: 20,
-                                  color: AppColors.textSecondary),
-                              onPressed: () => _confirmDelete(a),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: () => _showAddSheet(),
-                  style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      side:
-                          const BorderSide(color: AppColors.primary),
-                      padding:
-                          const EdgeInsets.symmetric(vertical: 14)),
-                  child: const Text('주소 추가하기'),
-                ),
-              ],
-            ),
     );
   }
 }
 
-// ── 주소 추가/수정 시트 ────────────────────────────────
+// ── 주소 없을 때 빈 화면 ───────────────────────────────
+class _EmptyView extends StatelessWidget {
+  final VoidCallback onAdd;
+  const _EmptyView({required this.onAdd});
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.location_off_outlined,
+                size: 64, color: AppColors.border),
+            const SizedBox(height: 16),
+            const Text('저장된 주소가 없어요',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textSecondary)),
+            const SizedBox(height: 8),
+            const Text(
+              '자주 가는 장소를 등록하면\n루틴 설정이 편리해요',
+              textAlign: TextAlign.center,
+              style:
+                  TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: onAdd,
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 32, vertical: 14)),
+              child: const Text('주소 추가하기',
+                  style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+}
+
+// ── 주소 추가/수정 시트 ───────────────────────────────
 class _AddressFormSheet extends StatefulWidget {
-  final _AddressItem? editing;
-  final void Function(String name, String address) onSave;
-  final VoidCallback? onDelete;
+  final AddressModel? editing;
+  final Future<void> Function(String name, String roadAddress,
+      String jibunAddress) onSave;
 
   const _AddressFormSheet({
     this.editing,
     required this.onSave,
-    this.onDelete,
   });
 
   @override
@@ -217,15 +233,15 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
   final _nameCtrl = TextEditingController();
   final _detailCtrl = TextEditingController();
   KakaoPostcodeResult? _kakaoResult;
-  // 수정 모드에서 기존 주소를 표시하기 위해 유지
   String? _prefilledAddress;
+  bool _saving = false;
 
   @override
   void initState() {
     super.initState();
     if (widget.editing != null) {
       _nameCtrl.text = widget.editing!.name;
-      _prefilledAddress = widget.editing!.address;
+      _prefilledAddress = widget.editing!.roadAddress;
     }
   }
 
@@ -239,34 +255,41 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
   bool get _hasAddress => _kakaoResult != null || _prefilledAddress != null;
 
   Future<void> _searchAddress() async {
-    final result = await Navigator.push<KakaoPostcodeResult>(
-      context,
+    final result = await Navigator.of(context, rootNavigator: true).push<KakaoPostcodeResult>(
       MaterialPageRoute(builder: (_) => const KakaoPostcodePage()),
     );
     if (result != null) setState(() => _kakaoResult = result);
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (_nameCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('장소 이름을 입력해주세요.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('장소 이름을 입력해주세요.')));
       return;
     }
     if (!_hasAddress) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('주소를 검색하여 선택해주세요.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('주소를 검색하여 선택해주세요.')));
       return;
     }
+
     final detail = _detailCtrl.text.trim();
-    final String fullAddress;
+    final String roadAddress;
+    final String jibunAddress;
+
     if (_kakaoResult != null) {
-      fullAddress = detail.isEmpty
+      roadAddress = detail.isEmpty
           ? _kakaoResult!.roadAddress
           : '${_kakaoResult!.roadAddress} $detail';
+      jibunAddress = _kakaoResult!.jibunAddress;
     } else {
-      fullAddress = _prefilledAddress!;
+      roadAddress = _prefilledAddress!;
+      jibunAddress = widget.editing?.jibunAddress ?? '';
     }
-    widget.onSave(_nameCtrl.text.trim(), fullAddress);
+
+    setState(() => _saving = true);
+    await widget.onSave(_nameCtrl.text.trim(), roadAddress, jibunAddress);
+    if (mounted) setState(() => _saving = false);
   }
 
   @override
@@ -281,24 +304,11 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 헤더
-            Row(
-              children: [
-                Text(widget.editing == null ? '주소 추가' : '주소 수정',
-                    style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w700)),
-                const Spacer(),
-                if (widget.onDelete != null)
-                  TextButton(
-                    onPressed: widget.onDelete,
-                    child: const Text('삭제',
-                        style: TextStyle(color: AppColors.error)),
-                  ),
-              ],
-            ),
+            Text(widget.editing == null ? '주소 추가' : '주소 수정',
+                style: const TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 16),
 
-            // 장소 이름
             const Text('장소 이름',
                 style: TextStyle(
                     fontSize: 13,
@@ -323,7 +333,6 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
             ),
             const SizedBox(height: 16),
 
-            // 주소
             const Text('주소',
                 style: TextStyle(
                     fontSize: 13,
@@ -408,11 +417,17 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _save,
+                onPressed: _saving ? null : _save,
                 style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary),
-                child: const Text('저장하기',
-                    style: TextStyle(color: Colors.white)),
+                child: _saving
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Text('저장하기',
+                        style: TextStyle(color: Colors.white)),
               ),
             ),
           ],

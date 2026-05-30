@@ -36,14 +36,14 @@ abstract class HomeRepository {
 /// 실제 백엔드 API를 호출하는 구현체
 class ApiHomeRepository implements HomeRepository {
   ApiHomeRepository(this._dio)
-      : fastApiDio = Dio(
-          BaseOptions(
-            baseUrl: ApiConstants.fastapiBaseUrl,
-            connectTimeout: const Duration(seconds: 15),
-            receiveTimeout: const Duration(seconds: 30),
-            headers: const {'Content-Type': 'application/json'},
-          ),
-        );
+    : fastApiDio = Dio(
+        BaseOptions(
+          baseUrl: ApiConstants.fastapiBaseUrl,
+          connectTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 30),
+          headers: const {'Content-Type': 'application/json'},
+        ),
+      );
   final Dio _dio;
   final Dio fastApiDio;
 
@@ -102,7 +102,9 @@ class ApiHomeRepository implements HomeRepository {
   @override
   Future<WeatherAirQualityModel> getWeatherAirQuality() async {
     final response = await fastApiDio.get(ApiConstants.briefingWeather);
-    return WeatherAirQualityModel.fromJson(response.data as Map<String, dynamic>);
+    return WeatherAirQualityModel.fromJson(
+      response.data as Map<String, dynamic>,
+    );
   }
 
   @override
@@ -137,9 +139,10 @@ class ApiHomeRepository implements HomeRepository {
     int? satRouteScore,
   }) async {
     String formatTime(DateTime time) {
-      return '${time.hour.toString().padLeft(2, '0')}:'
-             '${time.minute.toString().padLeft(2, '0')}:'
-             '${time.second.toString().padLeft(2, '0')}';
+      final local = time.toLocal(); // UTC → 기기 로컬(KST) 변환
+      return '${local.hour.toString().padLeft(2, '0')}:'
+          '${local.minute.toString().padLeft(2, '0')}:'
+          '${local.second.toString().padLeft(2, '0')}';
     }
 
     try {
