@@ -43,15 +43,21 @@ class RoutineListNotifier
   }
 }
 
-// 루틴 상세
+// 루틴 상세 — autoDispose로 화면 이탈 시 캐시 제거 → 재진입 시 항상 최신 데이터 조회
 final routineDetailProvider =
-    FutureProvider.family<RoutineModel, int>((ref, routineId) {
-  return ref.read(routineRepositoryProvider).getRoutineDetail(routineId);
+    FutureProvider.autoDispose.family<RoutineModel, int>((ref, routineId) {
+  return ref.watch(routineRepositoryProvider).getRoutineDetail(routineId);
 });
 
 // 주소 목록
 final addressListProvider = FutureProvider<List<AddressModel>>((ref) {
   return ref.read(routineRepositoryProvider).getAddresses();
+});
+
+// 경로 상세 조회 (routineDetail의 route가 null일 때 fallback)
+final routeDetailProvider =
+    FutureProvider.autoDispose.family<RouteModel, int>((ref, recoId) {
+  return ref.watch(routineRepositoryProvider).getRouteDetail(recoId);
 });
 
 // 경로 검색 결과

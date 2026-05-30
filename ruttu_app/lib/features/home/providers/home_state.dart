@@ -8,13 +8,15 @@ class HomeState {
   final HomeStatus status;
   final bool isLoading;
   final RoutineModel? activeRoutine;
-  final RouteModel? myRoute;
-  final RouteModel? recommendedRoute;
+  final LiveRouteModel? myRoute;
+  final LiveRouteModel? recommendedRoute;
   final WeatherAirQualityModel? weather;
   final List<IssueModel> issues;
   final LiveStatusModel? liveStatus;
   final int currentStepIndex;
   final int stepRemainingMinutes;
+  /// getCurrentSection()에서 내려온 xy 좌표 목록 → 지도에 경로 폴리라인으로 그림
+  final List<RouteXYModel> routeCoordinates;
 
   const HomeState({
     this.status = HomeStatus.noRoutine,
@@ -27,6 +29,7 @@ class HomeState {
     this.liveStatus,
     this.currentStepIndex = 0,
     this.stepRemainingMinutes = 0,
+    this.routeCoordinates = const [],
   });
 
   bool get isDepartureImminent {
@@ -45,13 +48,14 @@ class HomeState {
     HomeStatus? status,
     bool? isLoading,
     RoutineModel? activeRoutine,
-    RouteModel? myRoute,
-    RouteModel? recommendedRoute,
+    LiveRouteModel? myRoute,
+    LiveRouteModel? recommendedRoute,
     WeatherAirQualityModel? weather,
     List<IssueModel>? issues,
     LiveStatusModel? liveStatus,
     int? currentStepIndex,
     int? stepRemainingMinutes,
+    List<RouteXYModel>? routeCoordinates,
   }) =>
       HomeState(
         status: status ?? this.status,
@@ -64,5 +68,6 @@ class HomeState {
         liveStatus: liveStatus ?? this.liveStatus,
         currentStepIndex: currentStepIndex ?? this.currentStepIndex,
         stepRemainingMinutes: stepRemainingMinutes ?? this.stepRemainingMinutes,
+        routeCoordinates: routeCoordinates ?? this.routeCoordinates,
       );
 }

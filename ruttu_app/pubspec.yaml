@@ -33,6 +33,7 @@ dependencies:
   geolocator: ^12.0.0
   cupertino_icons: ^1.0.8
   flutter_naver_map: ^1.3.0
+  flutter_dotenv: ^5.2.1
 
   # 상태관리
   flutter_riverpod: ^2.6.1
@@ -77,6 +78,10 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - .env.dev
+    - .env.prod
 
   # To add assets to your application, add an assets section, like this:
   # assets:

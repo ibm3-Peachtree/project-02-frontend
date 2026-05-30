@@ -44,7 +44,38 @@ class _RoutineListScreenState extends ConsumerState<RoutineListScreen> {
       body: asyncRoutines.when(
         loading: () =>
             const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('오류: $e')),
+        error: (e, _) {
+          final is503 = e.toString().contains('503') || e.toString().contains('Service Unavailable');
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(is503 ? Icons.cloud_off_outlined : Icons.error_outline,
+                      size: 56, color: AppColors.textSecondary),
+                  const SizedBox(height: 16),
+                  Text(
+                    is503 ? '서버 점검 중이에요' : '루틴을 불러오지 못했어요',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    is503 ? '잠시 후 다시 시도해주세요.' : '네트워크 상태를 확인해주세요.',
+                    style: const TextStyle(color: AppColors.textSecondary),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton.icon(
+                    onPressed: () => ref.invalidate(routineListProvider),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('다시 시도'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
         data: (routines) {
           if (routines.isEmpty) return const _EmptyRoutineBody();
 
@@ -276,7 +307,7 @@ class _RoutineCard extends StatelessWidget {
                   ),
                   const Spacer(),
                   Text(
-                    '출발 ${routine.recommendedDepartureTime}',
+                    '권장 출발 시간: ${routine.recommendedDepartureTime}',
                     style: const TextStyle(
                         fontSize: 13,
                         color: AppColors.primary,

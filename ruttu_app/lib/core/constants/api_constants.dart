@@ -1,12 +1,10 @@
-import 'package:flutter/foundation.dart';
-import 'package:dio/dio.dart';
+import '../config/env_config.dart';
+
 class ApiConstants {
   ApiConstants._();
 
-static String get springBaseUrl {
-  return 'http://10.0.2.2:8080';
-}
-  static String get fastapiBaseUrl => springBaseUrl;
+  static String get springBaseUrl => EnvConfig.springBaseUrl;
+  static String get fastapiBaseUrl => EnvConfig.fastapiBaseUrl;
 
   // ── 1. Auth ──────────────────────────────────────────────
   static const googleLogin = '/auth/google';
@@ -35,7 +33,8 @@ static String get springBaseUrl {
   // ── 6. Live Routine ──────────────────────────────────────
   static const liveStatus = '/me/routines/active/status';
   static const liveMyRoute = '/me/routines/active/route';
-  static const liveRecoRoute = '/me/routes/active/reco';
+  static const liveRecoRoute = '/me/routines/active/reco';   // 오타 수정: /me/routes → /me/routines
+  static const liveCurrentSection = '/me/routines/active/location';
   static const liveLocation = '/me/routines/active';
   static const todayIssues = '/me/issues';
 

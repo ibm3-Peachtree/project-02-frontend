@@ -233,14 +233,15 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
           ),
         );
       } else {
+        final msg = serverMessage.isNotEmpty ? serverMessage : '루틴 저장에 실패했어요. (${e.response?.statusCode})';
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('루틴 저장에 실패했어요. 다시 시도해 주세요.')),
+          SnackBar(content: Text(msg), backgroundColor: AppColors.error),
         );
       }
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('루틴 저장에 실패했어요. 다시 시도해 주세요.')),
+        SnackBar(content: Text('루틴 저장에 실패했어요: $e'), backgroundColor: AppColors.error),
       );
     }
   }

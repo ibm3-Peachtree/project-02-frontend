@@ -6,6 +6,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../data/models/routine_model.dart';
 import '../../../data/models/route_model.dart';
 import '../providers/routine_provider.dart';
+import '../../home/providers/home_provider.dart';
 
 class RoutineDetailScreen extends ConsumerWidget {
   final int routineId;
@@ -21,7 +22,29 @@ class RoutineDetailScreen extends ConsumerWidget {
       ),
       error: (e, _) => Scaffold(
         appBar: AppBar(title: const Text('루틴 상세')),
-        body: Center(child: Text('오류: $e')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, size: 56, color: AppColors.textSecondary),
+                const SizedBox(height: 16),
+                const Text('루틴 정보를 불러오지 못했어요',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                Text('$e', style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: () => ref.invalidate(routineDetailProvider(routineId)),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('다시 시도'),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
       data: (routine) => _RoutineDetailBody(routine: routine),
     );
@@ -58,7 +81,14 @@ class _RoutineDetailBody extends ConsumerWidget {
           const SizedBox(height: 16),
 
           // ── 경로 상세 카드
-          _RouteDetailCard(routine: routine),
+          // route가 null이면 recoId로 별도 조회
+          if (routine.route != null)
+            _RouteDetailCard(route: routine.route!)
+          else
+            _RouteDetailFallback(
+              recoId: routine.routineId,  // routineId로 경로 조회 시도
+              routine: routine,
+            ),
           const SizedBox(height: 16),
 
           // ── 통계 row
@@ -72,7 +102,12 @@ class _RoutineDetailBody extends ConsumerWidget {
           child: SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () => context.pop(),
+              onPressed: () async {
+                // 홈 화면으로 이동 후 startRoute() 호출 → active 상태로 전환
+                context.go(RouteConstants.home);
+                await Future.delayed(const Duration(milliseconds: 300));
+                ref.read(homeProvider.notifier).startRoute();
+              },
               child: const Text('지금 출발하기'),
             ),
           ),
@@ -132,6 +167,7 @@ class _RoutineDetailBody extends ConsumerWidget {
   }
 }
 
+// ── 헤더 카드 ──────────────────────────────────────────
 class _HeaderCard extends StatelessWidget {
   final RoutineModel routine;
   const _HeaderCard({required this.routine});
@@ -152,11 +188,19 @@ class _HeaderCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${routine.departureAddressName} → ${routine.arrivalAddressName}',
+            routine.routineName,
             style: const TextStyle(
                 color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w700),
+                fontSize: 22,
+                fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${routine.departureAddressName} → ${routine.arrivalAddressName}',
+            style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 15,
+                fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 10),
           Wrap(
@@ -177,9 +221,22 @@ class _HeaderCard extends StatelessWidget {
             }).toList(),
           ),
           const SizedBox(height: 10),
-          Text(
-            '목표 도착 ${routine.targetArrivalTime} · 예상 ${routine.estimatedDuration}분',
-            style: const TextStyle(color: Colors.white70, fontSize: 14),
+          Row(
+            children: [
+              const Icon(Icons.access_time, size: 14, color: Colors.white70),
+              const SizedBox(width: 4),
+              Text(
+                '목표 도착 ${routine.targetArrivalTime}',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(width: 12),
+              const Icon(Icons.schedule, size: 14, color: Colors.white70),
+              const SizedBox(width: 4),
+              Text(
+                '권장 출발 ${routine.recommendedDepartureTime}',
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ],
           ),
         ],
       ),
@@ -187,42 +244,98 @@ class _HeaderCard extends StatelessWidget {
   }
 }
 
+// ── 경로 상세 카드 (route가 있을 때) ────────────────────
 class _RouteDetailCard extends StatelessWidget {
-  final RoutineModel routine;
-  const _RouteDetailCard({required this.routine});
-
-  // Mock 경로 단계 — 실제 서버 연동 시 GET /routines/{id} 응답의 route 필드로 교체
-  static const _mockPaths = [
-    PathModel(type: 'walk', sectionTime: 8,
-        start: '집', end: '강남역'),
-    PathModel(type: 'subway', sectionTime: 12,
-        no: ['2'], stationCount: 3,
-        start: '강남역', end: '을지로입구역', way: '성수 방향'),
-    PathModel(type: 'walk', sectionTime: 5,
-        start: '을지로입구역', end: '회사'),
-  ];
+  final RouteModel route;
+  const _RouteDetailCard({required this.route});
 
   @override
   Widget build(BuildContext context) {
+    final paths = route.path;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('경로 상세',
-                style: TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.w700)),
+            Row(
+              children: [
+                const Text('경로 상세',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                const Spacer(),
+                // 요금 / 소요시간 요약
+                Text('${route.totalTime}분',
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primary)),
+                const Text(' · ',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+                Text('${_formatMoney(route.payment)}원',
+                    style: const TextStyle(fontSize: 14, color: AppColors.textSecondary)),
+              ],
+            ),
             const SizedBox(height: 16),
-            ..._mockPaths.asMap().entries.map((e) =>
-                _PathStepItem(path: e.value, isLast: e.key == _mockPaths.length - 1)),
+            if (paths.isEmpty)
+              const Text('경로 정보가 없습니다.',
+                  style: TextStyle(color: AppColors.textSecondary))
+            else
+              ...paths.asMap().entries.map((e) =>
+                  _PathStepItem(path: e.value, isLast: e.key == paths.length - 1)),
           ],
         ),
       ),
     );
   }
+
+  static String _formatMoney(int n) {
+    final s = n.toString();
+    final buf = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+      buf.write(s[i]);
+    }
+    return buf.toString();
+  }
 }
 
+// ── 경로 없을 때 — recoId로 fallback 조회 ──────────────
+class _RouteDetailFallback extends ConsumerWidget {
+  final int recoId;
+  final RoutineModel routine;
+  const _RouteDetailFallback({required this.recoId, required this.routine});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncRoute = ref.watch(routeDetailProvider(recoId));
+    return asyncRoute.when(
+      loading: () => const Card(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ),
+      error: (_, __) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Text('경로 상세',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              SizedBox(height: 12),
+              Text('경로 정보를 불러올 수 없어요.',
+                  style: TextStyle(color: AppColors.textSecondary)),
+            ],
+          ),
+        ),
+      ),
+      data: (route) => _RouteDetailCard(route: route),
+    );
+  }
+}
+
+// ── 경로 단계 항목 ──────────────────────────────────────
 class _PathStepItem extends StatelessWidget {
   final PathModel path;
   final bool isLast;
@@ -268,20 +381,41 @@ class _PathStepItem extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: Padding(
-            padding: EdgeInsets.only(bottom: isLast ? 0 : 20),
+            padding: EdgeInsets.only(bottom: isLast ? 0 : 20, top: 4),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (path.start != null || path.end != null)
+                  Text(
+                    '${path.start ?? ''} → ${path.end ?? ''}',
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                const SizedBox(height: 4),
+                // 노선 번호를 강조해서 보여주기
+                if (!path.isWalking && path.no.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: (path.isSubway ? Colors.blue : Colors.green).withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      path.isSubway ? '${path.no.first}호선 (${path.way ?? ''} 방향)' : '${path.no.first}번 버스',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: path.isSubway ? Colors.blue : Colors.green,
+                      ),
+                    ),
+                  ),
                 Text(
-                  '${path.start ?? ''} → ${path.end ?? ''}',
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${path.typeLabel} ${path.sectionTime}분'
-                  '${path.stationCount != null ? ' · ${path.stationCount}정거장' : ''}'
-                  '${path.way != null ? ' · ${path.way}' : ''}',
+                  [
+                    '${path.typeLabel} ${path.sectionTime}분',
+                    if (path.stationCount != null) '${path.stationCount}정거장',
+                    if (path.no.isNotEmpty) _noLabel(path),
+                  ].join(' · '),
                   style: const TextStyle(
                       fontSize: 13, color: AppColors.textSecondary),
                 ),
@@ -292,28 +426,51 @@ class _PathStepItem extends StatelessWidget {
       ],
     );
   }
+
+  String _noLabel(PathModel path) {
+    if (path.isSubway) return '${path.no.first}호선';
+    if (path.isBus)    return '${path.no.first}번';
+    return '';
+  }
 }
 
+// ── 통계 row ───────────────────────────────────────────
 class _StatsRow extends StatelessWidget {
   final RoutineModel routine;
   const _StatsRow({required this.routine});
 
+  static String _formatNumber(int n) {
+    final s = n.toString();
+    final buf = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+      buf.write(s[i]);
+    }
+    return buf.toString();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final route = routine.route;
+    final distanceKm = route != null
+        ? '${(route.totalDistance / 1000).toStringAsFixed(1)}km'
+        : '-';
+    final payment = route != null
+        ? '${_formatNumber(route.payment)}원'
+        : '-';
     final stats = [
-      ('총 거리', '3.2km'),
-      ('예상 요금', '1,400원'),
-      ('혼잡도', '보통'),
+      ('총 거리', distanceKm),
+      ('예상 요금', payment),
+      ('소요 시간', routine.estimatedDuration > 0 ? '${routine.estimatedDuration}분' : '-'),
     ];
 
     return Row(
-      children: stats.map((item) {
-        final (label, value) = item;
+      children: stats.asMap().entries.map((entry) {
+        final isLast = entry.key == stats.length - 1;
+        final (label, value) = entry.value;
         return Expanded(
           child: Card(
-            margin: EdgeInsets.only(
-              right: label != '혼잡도' ? 8 : 0,
-            ),
+            margin: EdgeInsets.only(right: isLast ? 0 : 8),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 14),
               child: Column(

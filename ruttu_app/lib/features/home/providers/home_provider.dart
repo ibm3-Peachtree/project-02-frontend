@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../data/models/routine_model.dart';
 import '../../../data/models/route_model.dart';
@@ -8,14 +9,8 @@ import '../../auth/providers/network_provider.dart';
 import 'home_state.dart';
 
 final homeRepositoryProvider = Provider<HomeRepository>((ref) {
-  // ✅ Mock 데이터로 화면을 구성하되, sendLiveLocation만 실제 API 호출
-  // 각 API가 완성되면 MockHomeRepository → ApiHomeRepository로 점진 전환
-  return MockHomeRepository(ref.read(apiClientProvider).dio);
+  return ApiHomeRepository(ref.read(apiClientProvider).dio);
 });
-
-// ✅ 버그2 수정: addressRepositoryProvider는 address_provider.dart 에만 두고
-//              home_provider.dart 에 있던 중복 선언 및
-//              `Future<List<AddressModel>> getAddresses();` 부유 선언을 모두 제거했습니다.
 
 final homeProvider = StateNotifierProvider<HomeNotifier, HomeState>(
   (ref) => HomeNotifier(ref.read(homeRepositoryProvider)),
@@ -23,23 +18,24 @@ final homeProvider = StateNotifierProvider<HomeNotifier, HomeState>(
 
 class HomeNotifier extends StateNotifier<HomeState> {
   final HomeRepository _repository;
+
+  /// 실시간 폴링 타이머 (active 상태에서 주기적으로 백엔드 조회)
   Timer? _liveTimer;
-  int _simulatedMinutes = 0;
+
+  /// 폴링 주기 — 10초마다 status / section / recoRoute 갱신
+  static const _pollInterval = Duration(seconds: 10);
 
   HomeNotifier(this._repository) : super(const HomeState());
 
   Future<void> initialize() async {
     state = state.copyWith(isLoading: true);
     try {
-      final results = await Future.wait([
-        _repository.getRoutines(),
-        _repository.getWeatherAirQuality(),
-        _repository.getMyRoute(),
-      ]);
+      final routines = await _repository.getRoutines();
 
-      final routines = results[0] as List<RoutineModel>;
-      final weather  = results[1] as WeatherAirQualityModel;
-      final myRoute  = results[2] as RouteModel;
+      WeatherAirQualityModel? weather;
+      try {
+        weather = await _repository.getWeatherAirQuality();
+      } catch (_) {}
 
       if (routines.isEmpty) {
         state = HomeState(status: HomeStatus.noRoutine, weather: weather);
@@ -52,13 +48,19 @@ class HomeNotifier extends StateNotifier<HomeState> {
         orElse: () => routines.first,
       );
 
+      LiveRouteModel? myRoute;
+      try {
+        myRoute = await _repository.getMyRoute();
+      } catch (_) {}
+
       state = HomeState(
         status: HomeStatus.preActive,
         activeRoutine: todayRoutine,
         weather: weather,
         myRoute: myRoute,
       );
-    } catch (_) {
+    } catch (e) {
+      debugPrint('❌ initialize 실패: $e');
       state = state.copyWith(isLoading: false);
     }
   }
@@ -67,76 +69,94 @@ class HomeNotifier extends StateNotifier<HomeState> {
     if (state.activeRoutine == null) return;
     state = state.copyWith(isLoading: true);
     try {
+      // 내 경로 + 추천 경로 + 현재 구간(xy 포함) + 현재 상태 한 번에 초기 로드
       final route = await _repository.getMyRoute();
       final recoRoute = await _repository.getRecommendedRoute();
-      _simulatedMinutes = 0;
+      final section = await _repository.getCurrentSection();
+      final liveStatus = await _repository.getLiveStatus();
+
+      final stepIndex = section?.idx ?? 0;
+
       state = state.copyWith(
         status: HomeStatus.active,
         myRoute: route,
         recommendedRoute: recoRoute,
         isLoading: false,
-        currentStepIndex: 0,
-        stepRemainingMinutes: route.path.isNotEmpty ? route.path.first.sectionTime : 0,
-        liveStatus: LiveStatusModel(
-          status: _statusLabel(route.path, 0),
-          updatedAt: DateTime.now().millisecondsSinceEpoch,
-        ),
+        currentStepIndex: stepIndex,
+        stepRemainingMinutes: _remainingMinutes(route, stepIndex),
+        liveStatus: liveStatus,
+        // xy 좌표 저장 → 지도 폴리라인에 사용
+        routeCoordinates: section?.xy ?? const [],
       );
-      _startSimulation(route);
+
+      _startPolling();
     } catch (_) {
       state = state.copyWith(isLoading: false);
     }
   }
 
-  void _startSimulation(RouteModel route) {
+  /// 백엔드를 주기적으로 폴링하여 상태를 갱신합니다.
+  /// - /me/routines/active/status   → liveStatus
+  /// - /me/routines/active/location → currentStepIndex
+  /// - /me/routines/active/reco     → recommendedRoute (추천 경로 실시간 반영)
+  void _startPolling() {
     _liveTimer?.cancel();
-    // 2초 = 시뮬레이션 1분 (데모용 20배속)
-    _liveTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      _simulatedMinutes++;
-      _tickSimulation(route);
-    });
+    _liveTimer = Timer.periodic(_pollInterval, (_) => _poll());
   }
 
-  void _tickSimulation(RouteModel route) {
-    int elapsed = 0;
-    for (int i = 0; i < route.path.length; i++) {
-      final stepEnd = elapsed + route.path[i].sectionTime;
-      if (_simulatedMinutes < stepEnd) {
-        state = state.copyWith(
-          currentStepIndex: i,
-          stepRemainingMinutes: stepEnd - _simulatedMinutes,
-          liveStatus: LiveStatusModel(
-            status: _statusLabel(route.path, i),
-            updatedAt: DateTime.now().millisecondsSinceEpoch,
-          ),
-        );
-        return;
+  Future<void> _poll() async {
+    if (state.status != HomeStatus.active) {
+      _liveTimer?.cancel();
+      _liveTimer = null;
+      return;
+    }
+
+    try {
+      // 현재 상태 (도보중 / 대기중 / 탑승중)
+      final liveStatus = await _repository.getLiveStatus();
+
+      // 현재 구간 인덱스
+      final section = await _repository.getCurrentSection();
+      final stepIndex = section?.idx ?? state.currentStepIndex;
+
+      // 추천 경로 — 실시간으로 최신 추천 반영
+      LiveRouteModel? recoRoute;
+      try {
+        recoRoute = await _repository.getRecommendedRoute();
+      } catch (_) {
+        recoRoute = state.recommendedRoute; // 실패 시 기존 유지
       }
-      elapsed += route.path[i].sectionTime;
+
+      final myRoute = state.myRoute;
+
+      state = state.copyWith(
+        liveStatus: liveStatus,
+        recommendedRoute: recoRoute,
+        currentStepIndex: stepIndex,
+        stepRemainingMinutes:
+            myRoute != null ? _remainingMinutes(myRoute, stepIndex) : 0,
+        // xy 좌표가 있으면 업데이트 (없으면 기존 유지)
+        routeCoordinates: (section != null && section.xy.isNotEmpty)
+            ? section.xy
+            : state.routeCoordinates,
+      );
+
+      // '도착' 상태면 폴링 종료
+      if (liveStatus.status == '도착') {
+        _liveTimer?.cancel();
+        _liveTimer = null;
+      }
+    } catch (e) {
+      debugPrint('[LivePoll] 폴링 실패 (무시됨): $e');
     }
-    // 전체 경로 완료
-    _liveTimer?.cancel();
-    _liveTimer = null;
-    state = state.copyWith(
-      stepRemainingMinutes: 0,
-      liveStatus: LiveStatusModel(
-        status: '도착',
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
-      ),
-    );
   }
 
-  String _statusLabel(List<PathModel> paths, int index) {
-    if (index >= paths.length) return '도착';
-    final path = paths[index];
-    if (path.isWalking) {
-      final prevIsTransit = index > 0 && !paths[index - 1].isWalking;
-      final nextIsTransit = index < paths.length - 1 && !paths[index + 1].isWalking;
-      if (prevIsTransit && nextIsTransit) return '환승 중';
-      return '도보 중';
-    }
-    if (path.isBus) return '버스 탑승 중';
-    return '지하철 탑승 중';
+  /// 현재 구간 이후 남은 예상 시간(분) 계산
+  int _remainingMinutes(LiveRouteModel route, int stepIndex) {
+    if (route.path.isEmpty || stepIndex >= route.path.length) return 0;
+    return route.path
+        .skip(stepIndex)
+        .fold(0, (sum, p) => sum + p.sectionTime);
   }
 
   /// GPS가 목적지 반경 내에 진입했을 때 호출됩니다.
@@ -144,7 +164,6 @@ class HomeNotifier extends StateNotifier<HomeState> {
     if (state.status != HomeStatus.active) return;
     _liveTimer?.cancel();
     _liveTimer = null;
-    _simulatedMinutes = 0;
     state = HomeState(
       status: HomeStatus.preActive,
       activeRoutine: state.activeRoutine,
@@ -159,11 +178,21 @@ class HomeNotifier extends StateNotifier<HomeState> {
   Future<void> stopRoute() async {
     _liveTimer?.cancel();
     _liveTimer = null;
-    _simulatedMinutes = 0;
     state = HomeState(
       status: HomeStatus.preActive,
       activeRoutine: state.activeRoutine,
       weather: state.weather,
+    );
+  }
+
+  /// 추천 경로를 내 경로로 채택 (세 번째 화면 "이 경로로 변경" 버튼)
+  void switchToRecommendedRoute() {
+    final reco = state.recommendedRoute;
+    if (reco == null) return;
+    state = state.copyWith(
+      myRoute: reco,
+      currentStepIndex: 0,
+      stepRemainingMinutes: reco.path.isNotEmpty ? reco.path.first.sectionTime : 0,
     );
   }
 

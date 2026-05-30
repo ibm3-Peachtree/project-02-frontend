@@ -112,7 +112,7 @@ class _WeatherCard extends StatelessWidget {
     final maxPop  = weather.weather.isNotEmpty
         ? weather.weather.map((w) => w.pop).reduce((a, b) => a > b ? a : b)
         : 0;
-    final pm25Label = weather.airQuality.pm25.seoul;
+    final pm25Label = weather.airQuality?.pm25.seoul ?? '—';
 
     Color airColor(String label) => switch (label) {
       '좋음' => Colors.green,
@@ -251,7 +251,7 @@ class _PrepCard extends StatelessWidget {
     final pop = weather.weather.isNotEmpty
         ? weather.weather.map((w) => w.pop).reduce((a, b) => a > b ? a : b)
         : 0;
-    final pm10 = weather.airQuality.pm10.seoul;
+    final pm10 = weather.airQuality?.pm10.seoul ?? '—';
 
     if (pop >= 40) {
       items.add((

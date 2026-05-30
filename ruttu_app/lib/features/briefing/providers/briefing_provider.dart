@@ -60,20 +60,40 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
 
   Future<void> load() async {
     state = state.copyWith(isLoading: true);
-    final results = await Future.wait([
-      _repository.getWeatherAirQuality(),
-      _repository.getTodayIssues(),
-      _repository.getScheduleItems(),
-      _repository.getMeetingRoute(),
-      if (_userId != null) _repository.getAiSummary(_userId),
+
+    // 각 항목이 실패해도 나머지는 정상 표시되도록 개별 처리
+    // API 개발 완료 전까지 mock이 사용되며, 실제 API 전환 후에도 안전하게 동작합니다.
+    WeatherAirQualityModel? weather;
+    List<IssueModel> issues = const [];
+    List<ScheduleItemModel> scheduleItems = const [];
+    RouteModel? meetingRoute;
+    AiSummaryModel? aiSummary;
+
+    await Future.wait([
+      _repository.getWeatherAirQuality()
+          .then((v) => weather = v)
+          .catchError((_) {}),
+      _repository.getTodayIssues()
+          .then((v) => issues = v)
+          .catchError((_) {}),
+      _repository.getScheduleItems()
+          .then((v) => scheduleItems = v)
+          .catchError((_) {}),
+      _repository.getMeetingRoute()
+          .then((v) => meetingRoute = v)
+          .catchError((_) {}),
+      if (_userId != null)
+        _repository.getAiSummary(_userId!)
+            .then((v) => aiSummary = v)
+            .catchError((_) {}),
     ]);
 
     state = BriefingState(
-      weather:       results[0] as WeatherAirQualityModel,
-      issues:        results[1] as List<IssueModel>,
-      scheduleItems: results[2] as List<ScheduleItemModel>,
-      meetingRoute:  results[3] as RouteModel?,
-      aiSummary:     results.length > 4 ? results[4] as AiSummaryModel? : null,
+      weather:       weather,
+      issues:        issues,
+      scheduleItems: scheduleItems,
+      meetingRoute:  meetingRoute,
+      aiSummary:     aiSummary,
     );
   }
 }

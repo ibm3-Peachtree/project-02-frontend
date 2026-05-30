@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import '../models/user_model.dart';
 import '../../core/constants/api_constants.dart';
@@ -46,11 +47,14 @@ class ApiAuthRepository implements AuthRepository {
   @override
   Future<LoginResponse> signInWithGoogle(String idToken) async {
     print("🔥 Login API 호출 시작");
+
     final res = await _dio.post(
       ApiConstants.googleLogin, // '/auth/google'
       data: {'idToken': idToken},
     );
+
     print("🔥 Login API 응답 옴");
+
     final loginRes = LoginResponse.fromJson(res.data);
     // 로그인 성공 시 유저 캐싱
     _cachedUser = UserModel(
