@@ -104,8 +104,11 @@ class AddressManageScreen extends ConsumerWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => _AddressFormSheet(
+      builder: (ctx) {
+        final currentAddresses = ref.read(_addressListProvider).valueOrNull ?? [];
+        return _AddressFormSheet(
         editing: editing,
+        existingAddresses: currentAddresses,
         onSave: (name, roadAddress, jibunAddress) async {
           final apiClient = ref.read(apiClientProvider);
           try {
@@ -131,7 +134,8 @@ class AddressManageScreen extends ConsumerWidget {
             }
           }
         },
-      ),
+        );
+      },
     );
   }
 
@@ -217,11 +221,13 @@ class _EmptyView extends StatelessWidget {
 // ── 주소 추가/수정 시트 ───────────────────────────────
 class _AddressFormSheet extends StatefulWidget {
   final AddressModel? editing;
+  final List<AddressModel> existingAddresses;
   final Future<void> Function(String name, String roadAddress,
       String jibunAddress) onSave;
 
   const _AddressFormSheet({
     this.editing,
+    required this.existingAddresses,
     required this.onSave,
   });
 
@@ -287,8 +293,37 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
       jibunAddress = widget.editing?.jibunAddress ?? '';
     }
 
+    // 중복 이름 체크 (수정 시 자기 자신 제외)
+    final inputName = _nameCtrl.text.trim();
+    final isDuplicate = widget.existingAddresses.any((a) =>
+        a.name == inputName &&
+        (widget.editing == null || a.addressId != widget.editing!.addressId));
+    if (isDuplicate) {
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('이름 중복',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          content: const Text('이미 사용 중인 장소 이름이에요.\n다른 이름을 입력해주세요.',
+              style: TextStyle(fontSize: 14)),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary),
+              child: const Text('확인',
+                  style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+      return;
+      return;
+    }
+
     setState(() => _saving = true);
-    await widget.onSave(_nameCtrl.text.trim(), roadAddress, jibunAddress);
+    await widget.onSave(inputName, roadAddress, jibunAddress);
     if (mounted) setState(() => _saving = false);
   }
 

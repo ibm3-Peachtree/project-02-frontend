@@ -24,6 +24,14 @@ class HomeState {
   /// 폴링에서 받은 raw section 데이터 — 정거장 위치 계산에 사용
   final CurrentSectionModel? currentSectionData;
 
+  /// true: 추천 경로로 변경해서 진행 중 → complete/reco 호출
+  /// false(기본): 나의 경로로 진행 중 → complete/my 호출
+  final bool isUsingRecoRoute;
+
+  /// 추천 경로의 좌표 목록 (나의 경로 routeCoordinates와 독립적으로 유지)
+  /// isUsingRecoRoute=true일 때 지도에 표시
+  final List<RouteXYModel> recoRouteCoordinates;
+
   const HomeState({
     this.status = HomeStatus.noRoutine,
     this.isLoading = false,
@@ -38,6 +46,8 @@ class HomeState {
     this.routeCoordinates = const [],
     this.departureTime,
     this.currentSectionData,
+    this.isUsingRecoRoute = false,
+    this.recoRouteCoordinates = const [],
   });
 
   bool get isDepartureImminent {
@@ -75,22 +85,34 @@ class HomeState {
   /// 현재 구간(버스/지하철) 내 남은 정거장 수.
   /// 도보/대기 중이면 null 반환.
   int? get stopsRemaining {
-    // liveStatus 기반으로 탑승 중이 아니면 null
     if (isWalking) return null;
 
-    final sec = currentSectionData;
-    if (sec == null) return null;
-    final raw = sec.section;
-    // idx = 도착 예정 구간, 현재 탑승 중인 구간은 idx - 1
-    final currentIdx = sec.idx - 1;
-    if (currentIdx < 0 || currentIdx >= raw.length) return null;
+    // myRoute의 현재 path 구간(bus/subway)의 stationName 목록에서
+    // 현재 정류장 이후 남은 정거장 수를 산출 (버스/지하철 공통)
+    final route = myRoute;
+    if (route == null) return null;
 
-    final currentType = raw[currentIdx];
-    if (currentType == 'walk') return null;
+    final paths = route.path;
+    if (currentStepIndex < 0 || currentStepIndex >= paths.length) return null;
 
-    // 남은 정거장 수: idx(도착 예정)까지 남은 개수 = idx - 1 - currentIdx
-    final remaining = sec.idx - 1 - currentIdx;
-    return remaining >= 0 ? remaining : 0;
+    final currentPath = paths[currentStepIndex];
+    if (currentPath.isWalking) return null;
+
+    final stations = currentPath.stationName;
+    if (stations.isEmpty) return currentPath.displayStationCount;
+
+    final currentStation = currentStationName;
+
+    // 현재 정류장을 모르면 전체 정거장 수 반환
+    if (currentStation == null) return currentPath.displayStationCount;
+
+    final currentPos = stations.indexOf(currentStation);
+    // 인덱스를 찾지 못하면 전체 수 반환
+    if (currentPos < 0) return currentPath.displayStationCount;
+
+    // stationName[0]=승차, stationName[last]=하차
+    // 현재 정류장 이후 하차지까지 남은 정거장 수
+    return (stations.length - 1 - currentPos).clamp(0, 9999);
   }
 
   /// 현재 위치 정거장 이름
@@ -139,6 +161,8 @@ class HomeState {
     List<RouteXYModel>? routeCoordinates,
     DateTime? departureTime,
     CurrentSectionModel? currentSectionData,
+    bool? isUsingRecoRoute,
+    List<RouteXYModel>? recoRouteCoordinates,
   }) =>
       HomeState(
         status: status ?? this.status,
@@ -154,5 +178,7 @@ class HomeState {
         routeCoordinates: routeCoordinates ?? this.routeCoordinates,
         departureTime: departureTime ?? this.departureTime,
         currentSectionData: currentSectionData ?? this.currentSectionData,
+        isUsingRecoRoute: isUsingRecoRoute ?? this.isUsingRecoRoute,
+        recoRouteCoordinates: recoRouteCoordinates ?? this.recoRouteCoordinates,
       );
 }

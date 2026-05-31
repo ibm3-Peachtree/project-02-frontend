@@ -13,6 +13,7 @@ abstract class HomeRepository {
   Future<LiveRouteModel> getMyRoute();
   Future<LiveRouteModel> getRecommendedRoute();
   Future<CurrentSectionModel?> getCurrentSection();
+  Future<CurrentSectionModel?> getRecoCurrentSection();
   Future<List<IssueModel>> getTodayIssues();
   Future<WeatherAirQualityModel> getWeatherAirQuality();
 
@@ -23,7 +24,25 @@ abstract class HomeRepository {
     required double accuracy,
   });
 
-  /// POST /me/routines/complete (routineId 제외 반영)
+  /// POST /me/routines/active/complete/my  (나의 경로로 완료)
+  Future<void> completeMyRoute({
+    required DateTime departureTime,
+    required DateTime arrivalTime,
+    int? satWaitTimeScore,
+    int? satEtaScore,
+    int? satRouteScore,
+  });
+
+  /// POST /me/routines/active/complete/reco  (추천 경로로 완료)
+  Future<void> completeRecoRoute({
+    required DateTime departureTime,
+    required DateTime arrivalTime,
+    int? satWaitTimeScore,
+    int? satEtaScore,
+    int? satRouteScore,
+  });
+
+  /// POST /me/routines/active/complete (routineId 제외 반영)
   Future<void> completeRoutine({
     required DateTime departureTime,
     required DateTime arrivalTime,
@@ -92,6 +111,12 @@ class ApiHomeRepository implements HomeRepository {
   }
 
   @override
+  Future<CurrentSectionModel?> getRecoCurrentSection() async {
+    final response = await _dio.get(ApiConstants.liveCurrentSectionReco);
+    return CurrentSectionModel.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  @override
   Future<List<IssueModel>> getTodayIssues() async {
     final response = await _dio.get(ApiConstants.todayIssues);
     return (response.data as List)
@@ -130,6 +155,80 @@ class ApiHomeRepository implements HomeRepository {
     }
   }
 
+  String _formatTime(DateTime time) {
+    final local = time.toLocal();
+    return '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}:'
+        '${local.second.toString().padLeft(2, '0')}';
+  }
+
+  Map<String, dynamic> _completeBody({
+    required DateTime departureTime,
+    required DateTime arrivalTime,
+    int? satWaitTimeScore,
+    int? satEtaScore,
+    int? satRouteScore,
+  }) =>
+      {
+        'departureTime': _formatTime(departureTime),
+        'arrivalTime': _formatTime(arrivalTime),
+        'satWaitTimeScore': satWaitTimeScore,
+        'satEtaScore': satEtaScore,
+        'satRouteScore': satRouteScore,
+      };
+
+  @override
+  Future<void> completeMyRoute({
+    required DateTime departureTime,
+    required DateTime arrivalTime,
+    int? satWaitTimeScore,
+    int? satEtaScore,
+    int? satRouteScore,
+  }) async {
+    try {
+      await _dio.post(
+        ApiConstants.routineCompleteMyRoute,
+        data: _completeBody(
+          departureTime: departureTime,
+          arrivalTime: arrivalTime,
+          satWaitTimeScore: satWaitTimeScore,
+          satEtaScore: satEtaScore,
+          satRouteScore: satRouteScore,
+        ),
+      );
+      debugPrint('[CompleteMyRoute] 전송 성공');
+    } catch (e) {
+      debugPrint('[CompleteMyRoute] 전송 실패: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> completeRecoRoute({
+    required DateTime departureTime,
+    required DateTime arrivalTime,
+    int? satWaitTimeScore,
+    int? satEtaScore,
+    int? satRouteScore,
+  }) async {
+    try {
+      await _dio.post(
+        ApiConstants.routineCompleteRecoRoute,
+        data: _completeBody(
+          departureTime: departureTime,
+          arrivalTime: arrivalTime,
+          satWaitTimeScore: satWaitTimeScore,
+          satEtaScore: satEtaScore,
+          satRouteScore: satRouteScore,
+        ),
+      );
+      debugPrint('[CompleteRecoRoute] 전송 성공');
+    } catch (e) {
+      debugPrint('[CompleteRecoRoute] 전송 실패: $e');
+      rethrow;
+    }
+  }
+
   @override
   Future<void> completeRoutine({
     required DateTime departureTime,
@@ -138,23 +237,16 @@ class ApiHomeRepository implements HomeRepository {
     int? satEtaScore,
     int? satRouteScore,
   }) async {
-    String formatTime(DateTime time) {
-      final local = time.toLocal(); // UTC → 기기 로컬(KST) 변환
-      return '${local.hour.toString().padLeft(2, '0')}:'
-          '${local.minute.toString().padLeft(2, '0')}:'
-          '${local.second.toString().padLeft(2, '0')}';
-    }
-
     try {
       await _dio.post(
         ApiConstants.routineComplete,
-        data: {
-          'departureTime': formatTime(departureTime),
-          'arrivalTime': formatTime(arrivalTime),
-          'satWaitTimeScore': satWaitTimeScore,
-          'satEtaScore': satEtaScore,
-          'satRouteScore': satRouteScore,
-        },
+        data: _completeBody(
+          departureTime: departureTime,
+          arrivalTime: arrivalTime,
+          satWaitTimeScore: satWaitTimeScore,
+          satEtaScore: satEtaScore,
+          satRouteScore: satRouteScore,
+        ),
       );
       debugPrint('[CompleteRoutine] 전송 성공');
     } catch (e) {

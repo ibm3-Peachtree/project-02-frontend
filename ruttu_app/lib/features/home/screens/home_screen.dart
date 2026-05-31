@@ -79,19 +79,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     // ✅ GPS keepAlive: build 안에서 watch하여 Provider가 항상 살아있도록 유지
     ref.watch(liveLocationProvider);
-    final home = ref.watch(homeProvider);
+    final status = ref.watch(homeProvider.select((s) => s.status));
+    final isLoading = ref.watch(homeProvider.select((s) => s.isLoading));
 
-    if (home.isLoading && home.status == HomeStatus.noRoutine) {
+    if (isLoading && status == HomeStatus.noRoutine) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    return switch (home.status) {
-      HomeStatus.noRoutine => _NoRoutineView(weather: home.weather),
-      HomeStatus.noTodayRoutine => _NoTodayRoutineView(weather: home.weather),
-      HomeStatus.preActive => _PreActiveView(home: home),
-      HomeStatus.active => _ActiveView(home: home, onStopTap: _onStopTap),
-      _ => const Scaffold(body: Center(child: CircularProgressIndicator())),
-    };
+    // noRoutine / noTodayRoutine은 별도 처리
+    if (status == HomeStatus.noRoutine) return _NoRoutineView();
+    if (status == HomeStatus.noTodayRoutine) return _NoTodayRoutineView();
+
+    // preActive / active: Offstage로 동시에 트리에 유지 → State가 절대 destroy되지 않아
+    // 탭 위치, 지도 컨트롤러 등 모든 상태가 보존됨.
+    final isActive = status == HomeStatus.active;
+    return Stack(
+      children: [
+        Offstage(
+          offstage: isActive,
+          child: _PreActiveView(),
+        ),
+        Offstage(
+          offstage: !isActive,
+          child: _ActiveView(onStopTap: _onStopTap),
+        ),
+      ],
+    );
   }
 }
 
@@ -102,11 +115,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 // 2-A-1: 오늘 루틴 없음 (루틴은 있지만 오늘 요일 해당 없음)
 // ───────────────────────────────────────────────
 class _NoTodayRoutineView extends ConsumerWidget {
-  final WeatherAirQualityModel? weather;
-  const _NoTodayRoutineView({this.weather});
+  const _NoTodayRoutineView();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final weather = ref.watch(homeProvider.select((s) => s.weather));
     final user = ref.watch(authProvider).user;
     final nickname = user?.nickname ?? '루뚜';
     final today = _todayKo();
@@ -304,11 +317,11 @@ class _NoTodayRoutineView extends ConsumerWidget {
 // 2-A-2: 루틴 없음 (아예 등록 안 함)
 // ───────────────────────────────────────────────
 class _NoRoutineView extends ConsumerWidget {
-  final WeatherAirQualityModel? weather;
-  const _NoRoutineView({this.weather});
+  const _NoRoutineView();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final weather = ref.watch(homeProvider.select((s) => s.weather));
     final user = ref.watch(authProvider).user;
     final nickname = user?.nickname ?? '루뚜';
 
@@ -347,9 +360,9 @@ class _CoralHeader extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [AppColors.primary, Color(0xFFFF8C55)],
+          colors: [AppColors.primary, Color(0xFFFA8B5A)],
         ),
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(24)),
+        borderRadius: BorderRadius.zero,
       ),
       padding: const EdgeInsets.fromLTRB(20, 56, 20, 24),
       child: Column(
@@ -468,7 +481,7 @@ class _EmptyRoutineSection extends StatelessWidget {
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [AppColors.primary, Color(0xFFFF8C55)],
+                colors: [AppColors.primary, Color(0xFFFA8B5A)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -1542,8 +1555,7 @@ class _MockRecoCard extends StatelessWidget {
 // 2-B: 출발 전 (루틴 있음, 미시작)
 // ───────────────────────────────────────────────
 class _PreActiveView extends ConsumerStatefulWidget {
-  final HomeState home;
-  const _PreActiveView({required this.home});
+  const _PreActiveView();
 
   @override
   ConsumerState<_PreActiveView> createState() => _PreActiveViewState();
@@ -1557,7 +1569,7 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
   /// routeCoordinates 중 첫 번째 유효 좌표를 초기 카메라 위치로 반환.
   /// 유효 좌표가 없으면 null 반환 → null이면 현재 위치로 이동.
   NCameraPosition? _initialCameraPosition() {
-    final coords = widget.home.routeCoordinates;
+    final coords = ref.read(homeProvider).routeCoordinates;
     for (final c in coords) {
       if (c.hasCoord) {
         return NCameraPosition(target: NLatLng(c.y!, c.x!), zoom: 14);
@@ -1581,10 +1593,8 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
   @override
   void didUpdateWidget(_PreActiveView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_mapController != null &&
-        widget.home.routeCoordinates != oldWidget.home.routeCoordinates) {
-      _drawRouteOnMap(_mapController!, widget.home.routeCoordinates);
-    }
+    // home prop이 제거됐으므로 routeCoordinates 변화를 직접 감지할 수 없음.
+    // _drawRouteOnMap은 onMapReady + GPS 갱신 시 호출되므로 여기서는 생략.
   }
 
   /// 전체 경로를 지도에 폴리라인으로 그리고, 전체 경로가 보이도록 카메라를 맞춥니다.
@@ -1651,7 +1661,7 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
     Color typeColor(String type) {
       switch (type) {
         case 'subway':
-          return Colors.blue;
+          return AppColors.subway;
         case 'bus':
           return const Color(0xFF22C55E);
         default:
@@ -1738,23 +1748,37 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
 
   @override
   Widget build(BuildContext context) {
-    final routine = widget.home.activeRoutine!;
-    final isImminent = widget.home.isDepartureImminent;
+    final home = ref.watch(homeProvider);
+    final routine = home.activeRoutine!;
+    final isImminent = home.isDepartureImminent;
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _onStartTap,
-        backgroundColor: AppColors.primary,
-        icon: const Icon(Icons.play_arrow_rounded, color: Colors.white),
-        label: const Text(
-          '시작',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-          ),
-        ),
+      floatingActionButton: AnimatedBuilder(
+        animation: _tabController,
+        builder: (context, _) {
+          final isRecoTab = _tabController.index == 1;
+          final isUsingReco = ref.watch(
+            homeProvider.select((s) => s.isUsingRecoRoute),
+          );
+          // 추천 경로 탭: 항상 FAB 숨김 (선택 전이든 안내 중이든)
+          if (isRecoTab) return const SizedBox.shrink();
+          // 추천 경로로 전환 후 안내 중: 나의 경로 탭에서도 FAB 숨김
+          if (isUsingReco) return const SizedBox.shrink();
+          return FloatingActionButton.extended(
+            onPressed: _onStartTap,
+            backgroundColor: AppColors.primary,
+            icon: const Icon(Icons.play_arrow_rounded, color: Colors.white),
+            label: const Text(
+              '시작',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
+              ),
+            ),
+          );
+        },
       ),
       body: Stack(
         children: [
@@ -1771,8 +1795,9 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
             ),
             onMapReady: (controller) {
               _mapController = controller;
-              if (widget.home.routeCoordinates.isNotEmpty) {
-                _drawRouteOnMap(controller, widget.home.routeCoordinates);
+              // 탭에 무관하게 나의 경로 좌표 표시 (preActive 지도는 항상 나의 경로)
+              if (home.routeCoordinates.isNotEmpty) {
+                _drawRouteOnMap(controller, home.routeCoordinates);
               } else {
                 _moveToCurrentLocation(controller);
               }
@@ -1890,7 +1915,7 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
             maxChildSize: 0.9,
             builder: (context, scrollController) => Container(
               decoration: const BoxDecoration(
-                color: Colors.white,
+                color: AppColors.background,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                 boxShadow: [
                   BoxShadow(
@@ -1917,23 +1942,63 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                                 .watch(briefingProvider)
                                 .aiSummary
                                 ?.summary,
-                            myRoute: widget.home.myRoute,
+                            myRoute: home.myRoute,
                           ),
                         ),
-                        SingleChildScrollView(
-                          controller: scrollController,
-                          child: _RecommendedPanel(
-                            route: widget.home.recommendedRoute,
-                            hasIncident: false,
-                            onKeep: () => _tabController.animateTo(0),
-                            onSwitch: () {
-                              ref
-                                  .read(homeProvider.notifier)
-                                  .switchToRecommendedRoute();
-                              _tabController.animateTo(0);
-                            },
-                          ),
-                        ),
+                        // ── 추천 경로 탭 ──────────────────────────────────
+                        // isUsingRecoRoute=true: 추천 경로로 전환 후 안내 중
+                        //   → recommendedRoute 기반 실시간 안내 패널 표시
+                        // isUsingRecoRoute=false: 아직 추천 경로 선택 전
+                        //   → 기존 추천 경로 소개 + 변경 버튼 표시
+                        Builder(builder: (context) {
+                          final isReco = ref.watch(
+                            homeProvider.select((s) => s.isUsingRecoRoute),
+                          );
+                          if (isReco) {
+                            return SingleChildScrollView(
+                              controller: scrollController,
+                              child: _ActivePanel(
+                                routine: routine,
+                                // ✅ 추천 경로 탭은 recommendedRoute 사용 (myRoute 아님)
+                                route: home.recommendedRoute,
+                                currentStepIndex: home.currentStepIndex,
+                                liveStatusText:
+                                    home.liveStatus?.status ?? '도보 중',
+                                stepRemainingMinutes:
+                                    home.stepRemainingMinutes,
+                                stopsRemaining: home.stopsRemaining,
+                                currentStationName:
+                                    home.currentStationName,
+                                isWalking: home.isWalking,
+                                sectionData: home.currentSectionData,
+                                onStop: () => ref
+                                    .read(homeProvider.notifier)
+                                    .stopRoute(),
+                              ),
+                            );
+                          }
+                          return SingleChildScrollView(
+                            controller: scrollController,
+                            child: _RecommendedPanel(
+                              route: home.recommendedRoute,
+                              hasIncident: false,
+                              onKeep: () => _tabController.animateTo(0),
+                              onSwitch: () async {
+                                // ✅ 순서: switchToRecommendedRoute → startRoute 1번만 호출
+                                // switchToRecommendedRoute()로 isUsingRecoRoute=true 설정 후
+                                // startRoute()에서 isReco=true → getMyRoute() 재호출 없이
+                                // 추천 경로로 출발
+                                ref
+                                    .read(homeProvider.notifier)
+                                    .switchToRecommendedRoute();
+                                await ref
+                                    .read(homeProvider.notifier)
+                                    .startRoute();
+                                // 탭 이동 없음 — 추천 경로 탭에서 그대로 실시간 안내
+                              },
+                            ),
+                          );
+                        }),
                       ],
                     ),
                   ),
@@ -1951,9 +2016,8 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
 // 2-C: 경로 진행 중
 // ───────────────────────────────────────────────
 class _ActiveView extends ConsumerStatefulWidget {
-  final HomeState home;
   final void Function(RoutineModel? routine) onStopTap;
-  const _ActiveView({required this.home, required this.onStopTap});
+  const _ActiveView({required this.onStopTap});
 
   @override
   ConsumerState<_ActiveView> createState() => _ActiveViewState();
@@ -1970,8 +2034,8 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
   /// routeCoordinates 중 현재 구간(idx) 이후 첫 번째 유효 좌표를 초기 카메라 위치로 반환.
   /// 없으면 null → 현재 위치로 이동.
   NCameraPosition? _initialCameraPosition() {
-    final coords = widget.home.routeCoordinates;
-    final idx = widget.home.currentStepIndex;
+    final coords = ref.read(homeProvider).routeCoordinates;
+    final idx = ref.read(homeProvider).currentStepIndex;
     // 현재 구간부터 탐색, 없으면 전체에서 탐색
     final searchList = idx < coords.length ? coords.skip(idx) : coords;
     for (final c in searchList) {
@@ -1990,7 +2054,9 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    // isUsingRecoRoute가 이미 true인 상태로 진입하면 탭 1로 시작
+    final initialIndex = ref.read(homeProvider).isUsingRecoRoute ? 1 : 0;
+    _tabController = TabController(length: 2, vsync: this, initialIndex: initialIndex);
     _startGpsStream();
   }
 
@@ -2014,7 +2080,7 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     try {
       // 경로가 아직 안 그려진 경우 전체 재드로우 (GPS 이벤트가 onMapReady보다 늦을 수 있음)
       if (!_routeDrawn) {
-        await _drawRouteOnMap(controller, widget.home.routeCoordinates);
+        await _drawRouteOnMap(controller, ref.read(homeProvider).routeCoordinates);
         return; // _drawRouteOnMap 내부에서 GPS 마커 + 카메라도 처리
       }
 
@@ -2034,19 +2100,12 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
   }
 
   @override
+
   void didUpdateWidget(_ActiveView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 좌표/구간/section이 바뀌면 지도 다시 그리기
-    final coordsChanged =
-        widget.home.routeCoordinates != oldWidget.home.routeCoordinates;
-    final stepChanged =
-        widget.home.currentStepIndex != oldWidget.home.currentStepIndex;
-    final sectionChanged =
-        widget.home.currentSectionData?.idx != oldWidget.home.currentSectionData?.idx;
-
-    if (_mapController != null && (coordsChanged || stepChanged || sectionChanged)) {
-      _drawRouteOnMap(_mapController!, widget.home.routeCoordinates);
-    }
+    // home prop이 제거됐으므로 Consumer + ref.listen으로 지도 갱신 처리.
+    // build()에서 ref.watch를 통해 homeProvider 변화를 감지하면
+    // NaverMapController가 있을 때 _drawRouteOnMap이 호출됨.
   }
 
   Future<void> _moveToCurrentLocation(NaverMapController controller) async {
@@ -2077,7 +2136,7 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     await controller.clearOverlays();
     _routeDrawn = false;
 
-    final section = widget.home.currentSectionData;
+    final section = ref.read(homeProvider).currentSectionData;
     // idx = 도착 예정 구간 인덱스 (현재 이동 중 구간 = idx - 1)
     final currentIdx = section != null ? (section.idx - 1).clamp(0, coords.length - 1) : -1;
 
@@ -2129,7 +2188,7 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
       Color segColor(String type, bool past) {
         if (past) return const Color(0xFFCBD5E1); // 지나온 구간: 연회색
         return switch (type) {
-          'subway' => Colors.blue,
+          'subway' => AppColors.subway,
           'bus'    => const Color(0xFF22C55E),
           _        => const Color(0xFF9CA3AF),
         };
@@ -2200,8 +2259,39 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
 
   @override
   Widget build(BuildContext context) {
-    final routine = widget.home.activeRoutine!;
-    final route = widget.home.myRoute;
+    final home = ref.watch(homeProvider);
+
+    // 추천 경로로 전환되는 순간 탭을 1로 자동 이동 (State가 살아있으므로 안전)
+    ref.listen<bool>(
+      homeProvider.select((s) => s.isUsingRecoRoute),
+      (prev, next) {
+        if (next && prev == false) {
+          _tabController.animateTo(1);
+        }
+      },
+    );
+
+    // 폴링으로 좌표/구간이 바뀌면 지도 다시 그리기
+    // 현재 활성 탭(나의 경로 vs 추천 경로)에 맞는 좌표를 사용
+    ref.listen<HomeState>(homeProvider, (prev, next) {
+      if (_mapController == null) return;
+      final isReco = next.isUsingRecoRoute;
+      final activeCoords = isReco ? next.recoRouteCoordinates : next.routeCoordinates;
+      final prevActiveCoords = isReco ? prev?.recoRouteCoordinates : prev?.routeCoordinates;
+      final coordsChanged = prevActiveCoords != activeCoords;
+      final stepChanged = prev?.currentStepIndex != next.currentStepIndex;
+      final sectionChanged = prev?.currentSectionData?.idx != next.currentSectionData?.idx;
+      if (coordsChanged || stepChanged || sectionChanged) {
+        _drawRouteOnMap(_mapController!, activeCoords);
+      }
+    });
+
+    final routine = home.activeRoutine!;
+    final route = home.myRoute;
+    // 현재 활성 탭에 맞는 경로 및 좌표
+    final isUsingReco = home.isUsingRecoRoute;
+    final activeRoute = isUsingReco ? home.recommendedRoute : home.myRoute;
+    final activeCoords = isUsingReco ? home.recoRouteCoordinates : home.routeCoordinates;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -2220,8 +2310,13 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
             ),
             onMapReady: (controller) {
               _mapController = controller;
-              // 좌표 있으면 경로 + 마커, 없으면 현재 GPS 마커만 표시
-              _drawRouteOnMap(controller, widget.home.routeCoordinates);
+              if (activeCoords.isNotEmpty) {
+                // 현재 활성 탭의 좌표로 지도 그리기
+                _drawRouteOnMap(controller, activeCoords);
+              } else {
+                // 추천 경로 좌표가 아직 없으면 (출발 직후 폴링 전) GPS 위치로 이동
+                _moveToCurrentLocation(controller);
+              }
             },
           ),
           SafeArea(
@@ -2266,7 +2361,7 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
             maxChildSize: 0.9,
             builder: (context, scrollController) => Container(
               decoration: const BoxDecoration(
-                color: Colors.white,
+                color: AppColors.background,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                 boxShadow: [
                   BoxShadow(
@@ -2289,36 +2384,68 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                           child: _ActivePanel(
                             routine: routine,
                             route: route,
-                            currentStepIndex: widget.home.currentStepIndex,
+                            currentStepIndex: home.currentStepIndex,
                             liveStatusText:
-                                widget.home.liveStatus?.status ?? '도보 중',
+                                home.liveStatus?.status ?? '도보 중',
                             stepRemainingMinutes:
-                                widget.home.stepRemainingMinutes,
-                            stopsRemaining: widget.home.stopsRemaining,
-                            currentStationName: widget.home.currentStationName,
-                            isWalking: widget.home.isWalking,
-                            sectionData: widget.home.currentSectionData,
+                                home.stepRemainingMinutes,
+                            stopsRemaining: home.stopsRemaining,
+                            currentStationName: home.currentStationName,
+                            isWalking: home.isWalking,
+                            sectionData: home.currentSectionData,
                             onStop: () =>
-                                widget.onStopTap(widget.home.activeRoutine),
+                                widget.onStopTap(home.activeRoutine),
                           ),
                         ),
-                        SingleChildScrollView(
-                          controller: scrollController,
-                          child: _RecommendedPanel(
-                            route: widget.home.recommendedRoute,
-                            hasIncident: false,
-                            onKeep: () => _tabController.animateTo(0),
-                            onSwitch: () {
-                              ref
-                                  .read(homeProvider.notifier)
-                                  .switchToRecommendedRoute();
-                              _tabController.animateTo(0);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('추천 경로로 변경되었어요.')),
-                              );
-                            },
-                          ),
-                        ),
+                        // ── 추천 경로 탭 ──────────────────────────────────
+                        // isUsingRecoRoute=true: 추천 경로로 전환 후 안내 중
+                        //   → recommendedRoute 기반 실시간 안내 패널 표시
+                        // isUsingRecoRoute=false: 아직 추천 경로 선택 전
+                        //   → 기존 추천 경로 소개 + 변경 버튼 표시
+                        Builder(builder: (context) {
+                          final isReco = ref.watch(
+                            homeProvider.select((s) => s.isUsingRecoRoute),
+                          );
+                          if (isReco) {
+                            return SingleChildScrollView(
+                              controller: scrollController,
+                              child: _ActivePanel(
+                                routine: routine,
+                                // ✅ 추천 경로 탭은 recommendedRoute 사용 (myRoute 아님)
+                                route: home.recommendedRoute,
+                                currentStepIndex: home.currentStepIndex,
+                                liveStatusText:
+                                    home.liveStatus?.status ?? '도보 중',
+                                stepRemainingMinutes:
+                                    home.stepRemainingMinutes,
+                                stopsRemaining: home.stopsRemaining,
+                                currentStationName:
+                                    home.currentStationName,
+                                isWalking: home.isWalking,
+                                sectionData: home.currentSectionData,
+                                onStop: () =>
+                                    widget.onStopTap(home.activeRoutine),
+                              ),
+                            );
+                          }
+                          return SingleChildScrollView(
+                            controller: scrollController,
+                            child: _RecommendedPanel(
+                              route: home.recommendedRoute,
+                              hasIncident: false,
+                              onKeep: () => _tabController.animateTo(0),
+                              onSwitch: () async {
+                                // ✅ switchToRecommendedRoute만 호출 (startRoute 중복 호출 제거)
+                                // startRoute는 이미 출발 시 호출됐으므로 재호출 불필요.
+                                // 재호출하면 getMyRoute()가 state.myRoute를 덮어쓰는 버그 발생.
+                                ref
+                                    .read(homeProvider.notifier)
+                                    .switchToRecommendedRoute();
+                                // 탭 이동 없음 — 추천 경로 탭에서 그대로 실시간 안내
+                              },
+                            ),
+                          );
+                        }),
                       ],
                     ),
                   ),
@@ -2343,10 +2470,10 @@ class _PanelCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
-    padding: const EdgeInsets.all(12),
+    padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
       color: color ?? Colors.white,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(16),
       boxShadow: [
         BoxShadow(
           color: Colors.black.withValues(alpha: 0.06),
@@ -2410,14 +2537,12 @@ class _PreActivePanel extends StatefulWidget {
 }
 
 class _PreActivePanelState extends State<_PreActivePanel> {
-  bool _showDetail = false;
-
   @override
   Widget build(BuildContext context) {
     final paths = widget.myRoute?.path ?? const [];
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2462,81 +2587,126 @@ class _PreActivePanelState extends State<_PreActivePanel> {
             ),
           ),
           const SizedBox(height: 8),
-          _PanelCard(
-            color: widget.isImminent
-                ? AppColors.amber.withValues(alpha: 0.3)
-                : null,
+          // ── 출발/도착 강조 카드 ──────────────────────────
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: widget.isImminent
+                    ? [const Color(0xFFFFF3E0), const Color(0xFFFFE0B2)]
+                    : [Colors.white, const Color(0xFFFFF5F2)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: widget.isImminent
+                    ? AppColors.warning.withValues(alpha: 0.5)
+                    : AppColors.primary.withValues(alpha: 0.2),
+              ),
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // 상단 레이블
                 Row(
                   children: [
                     Icon(
-                      widget.isImminent
-                          ? Icons.directions_run
-                          : Icons.access_time,
-                      size: 15,
-                      color: widget.isImminent
-                          ? AppColors.warning
-                          : AppColors.textSecondary,
+                      widget.isImminent ? Icons.directions_run : Icons.access_time_rounded,
+                      size: 13,
+                      color: widget.isImminent ? AppColors.warning : AppColors.textSecondary,
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 4),
                     Text(
                       widget.isImminent ? '곧 출발하세요!' : '출발 예정',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: widget.isImminent
-                            ? AppColors.warning
-                            : AppColors.textSecondary,
+                        color: widget.isImminent ? AppColors.warning : AppColors.textSecondary,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      widget.routine.recommendedDepartureTime,
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(
-                        '출발  →  ${widget.routine.targetArrivalTime} 도착',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 10),
+                // 출발 시각 ←→ 도착 시각 강조 행
                 Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
+                    // 출발
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Text(
+                            '출발',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primary.withValues(alpha: 0.7),
+                            ),
+                          ),
+                          Text(
+                            widget.routine.recommendedDepartureTime,
+                            style: const TextStyle(
+                              fontSize: 30,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.primary,
+                              height: 1.1,
+                            ),
+                          ),
+                        ],
                       ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE3F0FC),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '약 ${widget.routine.estimatedDuration}분 소요',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF1155CC),
+                    ),
+                    // 화살표 (소요시간 뱃지)
+                    Column(
+                      children: [
+                        const SizedBox(height: 14),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '약 ${widget.routine.estimatedDuration}분',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                              const SizedBox(width: 3),
+                              const Icon(Icons.arrow_forward_rounded, size: 13, color: AppColors.primary),
+                            ],
+                          ),
                         ),
+                      ],
+                    ),
+                    // 도착
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Text(
+                            '도착',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.secondary.withValues(alpha: 0.7),
+                            ),
+                          ),
+                          Text(
+                            widget.routine.targetArrivalTime,
+                            style: const TextStyle(
+                              fontSize: 30,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.secondary,
+                              height: 1.1,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -2545,51 +2715,40 @@ class _PreActivePanelState extends State<_PreActivePanel> {
             ),
           ),
           const SizedBox(height: 8),
-          _PanelCard(
-            child: Column(
-              children: [
-                _RouteTransitRow(paths: paths),
-                if (paths.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  GestureDetector(
-                    onTap: () => setState(() => _showDetail = !_showDetail),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          _showDetail ? '경로 상세 접기' : '경로 상세 보기',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Icon(
-                          _showDetail
-                              ? Icons.keyboard_arrow_up
-                              : Icons.keyboard_arrow_down,
-                          size: 18,
-                          color: AppColors.primary,
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_showDetail) ...[
-                    const SizedBox(height: 8),
-                    const Divider(height: 1),
-                    const SizedBox(height: 8),
-                    ...paths.asMap().entries.map(
-                      (e) => _PathItem(
-                        path: e.value,
-                        isCurrent: false,
-                        isLast: e.key == paths.length - 1,
-                      ),
-                    ),
-                  ],
-                ],
+          // ── 경로 단계 카드
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
               ],
             ),
+            clipBehavior: Clip.hardEdge,
+            child: paths.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Column(
+                      children: [
+                        Icon(Icons.route_outlined, size: 40, color: AppColors.border),
+                        const SizedBox(height: 8),
+                        const Text('경로를 불러오는 중이에요',
+                            style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                      ],
+                    ),
+                  )
+                : Column(
+                    children: paths.asMap().entries.map((e) => _PathItem(
+                      path: e.value,
+                      isCurrent: false,
+                      isFirst: e.key == 0,
+                      isLast: e.key == paths.length - 1,
+                    )).toList(),
+                  ),
           ),
         ],
       ),
@@ -2654,8 +2813,8 @@ class _ActivePanel extends StatelessWidget {
   }
 
   static Color _statusColor(String status) {
-    if (status.contains('버스')) return Colors.orange;
-    if (status.contains('지하철')) return Colors.blue;
+    if (status.contains('버스')) return AppColors.bus;
+    if (status.contains('지하철')) return AppColors.subway;
     if (status.contains('환승')) return AppColors.secondary;
     if (status == '도착') return AppColors.success;
     return AppColors.success;
@@ -2715,17 +2874,17 @@ class _ActivePanel extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.blue.withValues(alpha: 0.06),
+            color: AppColors.subway.withValues(alpha: 0.06),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+            border: Border.all(color: AppColors.subway.withValues(alpha: 0.2)),
           ),
           child: Row(
             children: [
-              const Icon(Icons.place_outlined, size: 16, color: Colors.blue),
+              const Icon(Icons.place_outlined, size: 16, color: AppColors.subway),
               const SizedBox(width: 8),
               Text(
                 '현재 위치: $currentStationName${stops != null ? "  ·  $stops정거장 남음" : ""}',
-                style: const TextStyle(fontSize: 12, color: Colors.blue),
+                style: const TextStyle(fontSize: 12, color: AppColors.subway),
               ),
             ],
           ),
@@ -2860,61 +3019,106 @@ class _ActivePanel extends StatelessWidget {
               ],
             ],
           ),
-          const SizedBox(height: 16),
-          _RoutineStepDots(paths: paths, currentStep: currentStepIndex, sectionData: sectionData),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              const Text(
-                '예상 도착 ',
-                style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
-              ),
-              Text(
-                routine.targetArrivalTime,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.primary,
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
                 ),
-              ),
-              if (route != null)
-                Text(
-                  '  약 ${route!.totalTime}분 소요',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: AppColors.textSecondary,
-                  ),
+              ],
+            ),
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+            child: Column(
+              children: [
+                _RoutineStepDots(paths: paths, currentStep: currentStepIndex, sectionData: sectionData),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Row(
+                        children: [
+                          const Text(
+                            '예상 도착 ',
+                            style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+                          ),
+                          Text(
+                            routine.targetArrivalTime,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          if (route != null)
+                            Flexible(
+                              child: Text(
+                                '  약 ${route!.totalTime}분 소요',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.textSecondary,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: onStop,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: const Text('■ 종료', style: TextStyle(fontWeight: FontWeight.w700)),
+                    ),
+                  ],
                 ),
-              const Spacer(),
-              OutlinedButton(
-                onPressed: onStop,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.textSecondary,
-                  side: const BorderSide(color: AppColors.border),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 8,
-                  ),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('■ 종료'),
-              ),
-            ],
+              ],
+            ),
           ),
           if (paths.isNotEmpty) ...[
             const SizedBox(height: 12),
-            const Divider(),
-            const SizedBox(height: 8),
-            ...paths.asMap().entries.map(
-              (entry) => _PathItem(
-                path: entry.value,
-                isCurrent: entry.key == currentStepIndex,
-                isLast: entry.key == paths.length - 1,
-                // ✅ 현재 구간일 때만 현재 정류장 이름 전달 (하이라이트용)
-                currentStationName: entry.key == currentStepIndex
-                    ? currentStationName
-                    : null,
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              clipBehavior: Clip.hardEdge,
+              child: Column(
+                children: paths.asMap().entries.map(
+                  (entry) => _PathItem(
+                    path: entry.value,
+                    isCurrent: entry.key == currentStepIndex,
+                    isFirst: entry.key == 0,
+                    isLast: entry.key == paths.length - 1,
+                    currentStationName: entry.key == currentStepIndex
+                        ? currentStationName
+                        : null,
+                  ),
+                ).toList(),
               ),
             ),
           ],
@@ -3029,178 +3233,81 @@ class _RecommendedPanel extends StatelessWidget {
             ),
             const SizedBox(height: 12),
           ],
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: hasIncident ? AppColors.secondary : AppColors.border,
-                width: hasIncident ? 2 : 1,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
+          // ── 소요시간 + 요금 요약 ──────────────────────────
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              route != null
+                  ? Text(
+                      '${route!.totalTime}분',
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w800,
+                        color: hasIncident ? AppColors.secondary : AppColors.primary,
+                      ),
+                    )
+                  : const Text('분석 중…',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary)),
+              if (route != null) ...[
+                const SizedBox(width: 8),
+                Text('예상 요금 ${_formatPayment(route!.payment)}원',
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
               ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                route != null
-                    ? Text(
-                        '${route!.totalTime}분',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w800,
-                          color: hasIncident
-                              ? AppColors.secondary
-                              : AppColors.primary,
-                        ),
-                      )
-                    : const Text(
-                        '분석 중...',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                const SizedBox(height: 8),
-                // 실제 API 데이터로 경로 칩 표시
-                Builder(
-                  builder: (context) {
-                    final r = route;
-                    if (r == null) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.schedule_rounded,
-                                size: 16,
-                                color: AppColors.border,
-                              ),
-                              const SizedBox(width: 6),
-                              const Text(
-                                '추천 경로를 분석 중이에요',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: AppColors.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            '잠시 후 최적 경로가 제안됩니다',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppColors.border,
-                            ),
-                          ),
-                        ],
-                      );
-                    }
-                    if (r.path.isNotEmpty) {
-                      return Wrap(
-                        spacing: 4,
-                        runSpacing: 4,
-                        children: r.path.map((p) {
-                          if (p.isWalking) {
-                            return _RouteChip(
-                              label: '🚶',
-                              color: AppColors.textSecondary,
-                            );
-                          } else if (p.isSubway) {
-                            return _RouteChip(
-                              label: p.subwayLineName,
-                              color: Colors.blue,
-                            );
-                          } else {
-                            return _RouteChip(
-                              label: p.no.isNotEmpty ? '${p.no.first}번' : '버스',
-                              color: Colors.orange,
-                            );
-                          }
-                        }).toList(),
-                      );
-                    }
-                    return Row(
-                      children: [
-                        Icon(
-                          Icons.schedule_rounded,
-                          size: 16,
-                          color: AppColors.border,
-                        ),
-                        const SizedBox(width: 6),
-                        const Text(
-                          '경로를 불러오는 중이에요',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 8),
-                Builder(
-                  builder: (context) {
-                    final r = route;
-                    if (r == null) return const SizedBox.shrink();
-                    return Text(
-                      '예상 요금 ${_formatPayment(r.payment)}원',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
-                      ),
-                    );
-                  },
-                ),
-                if (hasIncident) ...[
-                  const SizedBox(height: 4),
-                  const Text(
-                    '+6분 (돌발 우회)',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.secondary,
-                      fontWeight: FontWeight.w500,
-                    ),
+              if (hasIncident) ...[
+                const SizedBox(width: 6),
+                const Text('+6분 (돌발 우회)',
+                    style: TextStyle(fontSize: 12, color: AppColors.secondary,
+                        fontWeight: FontWeight.w500)),
+              ],
+            ],
+          ),
+          const SizedBox(height: 12),
+          // ── 경로 단계 목록 ────────────────────────────────
+          if (route == null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Row(
+                children: [
+                  Icon(Icons.schedule_rounded, size: 16, color: AppColors.border),
+                  const SizedBox(width: 6),
+                  const Text('추천 경로를 분석 중이에요',
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                ],
+              ),
+            )
+          else if (route!.path.isNotEmpty)
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.amber,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
                   ),
                 ],
-                // 구간 상세도 표시
-                Builder(
-                  builder: (context) {
-                    final r = route;
-                    if (r != null && r.path.isNotEmpty) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 12),
-                          const Divider(height: 1),
-                          const SizedBox(height: 8),
-                          ...r.path.asMap().entries.map(
-                            (e) => _PathItem(
-                              path: e.value,
-                              isCurrent: false,
-                              isLast: e.key == r.path.length - 1,
-                            ),
-                          ),
-                        ],
-                      );
-                    }
-                    return const SizedBox.shrink();
-                  },
-                ),
+              ),
+              clipBehavior: Clip.hardEdge,
+              child: Column(
+                children: route!.path.asMap().entries.map((e) => _PathItem(
+                  path: e.value,
+                  isCurrent: false,
+                  isLast: e.key == route!.path.length - 1,
+                )).toList(),
+              ),
+            )
+          else
+            Row(
+              children: [
+                Icon(Icons.schedule_rounded, size: 16, color: AppColors.border),
+                const SizedBox(width: 6),
+                const Text('경로를 불러오는 중이에요',
+                    style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
               ],
             ),
-          ),
           const SizedBox(height: 20),
           if (hasIncident) ...[
             SizedBox(
@@ -3274,6 +3381,9 @@ class _RouteChip extends StatelessWidget {
     child: Text(
       label,
       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.center,
     ),
   );
 }
@@ -3310,45 +3420,38 @@ class _RouteTransitRow extends StatelessWidget {
       );
     }
 
+    // 도보는 아이콘, 버스는 번호 전체를 한 칩에, 지하철은 노선명 칩
     final chips = <Widget>[];
     for (int i = 0; i < paths.length; i++) {
       final path = paths[i];
       if (path.isWalking) {
         chips.add(
-          const Icon(
-            Icons.directions_walk,
-            size: 18,
-            color: AppColors.textSecondary,
-          ),
+          const Icon(Icons.directions_walk, size: 18, color: AppColors.textSecondary),
         );
       } else if (path.isSubway) {
-        chips.add(
-          _RouteChip(
-            label: path.subwayLineName,
-            color: Colors.blue,
-          ),
-        );
+        chips.add(_RouteChip(label: path.subwayLineName, color: AppColors.subway));
       } else {
-        chips.add(
-          _RouteChip(
-            label: '${path.no.isNotEmpty ? path.no.first : ''}번',
-            color: Colors.orange,
-          ),
-        );
+        // 버스: 번호 전체를 "5535 · 8551(출근맞춤버스) · 500" 한 칩으로
+        final nums = path.no.where((n) => n.isNotEmpty).toList();
+        if (nums.isNotEmpty) {
+          chips.add(_RouteChip(label: nums.join(' · '), color: AppColors.bus));
+        }
       }
       if (i < paths.length - 1) {
         chips.add(
           const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
+            padding: EdgeInsets.symmetric(horizontal: 2),
             child: Icon(Icons.arrow_forward, size: 12, color: AppColors.border),
           ),
         );
       }
     }
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(children: chips),
+    return Wrap(
+      spacing: 4,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: chips,
     );
   }
 }
@@ -3576,66 +3679,67 @@ class _RouteOptionCard extends StatelessWidget {
               const SizedBox(height: 10),
               Row(
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        departureTime,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                      const Text(
-                        '출발',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
                   Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Container(
-                              height: 1,
-                              margin: const EdgeInsets.symmetric(horizontal: 8),
-                              color: AppColors.border,
-                            ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(
+                          departureTime,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.primary,
                           ),
-                          const Icon(
-                            Icons.arrow_forward,
-                            size: 12,
-                            color: AppColors.border,
+                        ),
+                        const Text(
+                          '출발',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        arrivalTime!,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textSecondary,
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 24,
+                          height: 1,
+                          color: AppColors.border,
                         ),
-                      ),
-                      const Text(
-                        '목표 도착',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.textSecondary,
+                        const Icon(
+                          Icons.arrow_forward,
+                          size: 12,
+                          color: AppColors.border,
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(
+                          arrivalTime!,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const Text(
+                          '목표 도착',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -3828,18 +3932,25 @@ class _RoutineStepDots extends StatelessWidget {
   });
 
   /// section 배열(["walk","bus","bus","bus","walk"])을 압축해
-  /// 레이블 목록("도보","버스","도착")을 만들고 현재 위치도 계산.
+  /// 레이블 목록("도보","버스:5535","지하철:수도권 1호선","도착")을 만들고 현재 위치도 계산.
   List<String> _sectionLabels() {
     final raw = sectionData?.section ?? [];
     if (raw.isEmpty) return [];
+    // 연속 중복 제거 (typeKey 기준 — "bus:5535","bus:5535" → "bus:5535" 하나로)
     final compressed = <String>[];
     for (final t in raw) {
       if (compressed.isEmpty || compressed.last != t) compressed.add(t);
     }
-    return compressed.map((t) => switch (t) {
-      'bus'    => '버스',
-      'subway' => '지하철',
-      _        => '도보',
+    return compressed.map((t) {
+      if (t == 'walk') return '도보';
+      if (t.startsWith('bus:')) return '버스:${t.substring(4)}';
+      if (t.startsWith('subway:')) {
+        final raw = t.substring(7); // e.g. "수도권 1호선"
+        // 이미 "호선"/"선" 포함 → 그대로, 숫자 코드 → "N호선"
+        final line = (raw.contains('호선') || raw.contains('선')) ? raw : '${raw}호선';
+        return '지하철:$line';
+      }
+      return '도보';
     }).toList()..add('도착');
   }
 
@@ -3864,7 +3975,13 @@ class _RoutineStepDots extends StatelessWidget {
     final sectionLabels = _sectionLabels();
     final labels = sectionLabels.isNotEmpty
         ? sectionLabels
-        : (paths.isEmpty ? null : (paths.map((p) => p.typeLabel).toList()..add('도착')));
+        : (paths.isEmpty ? null : (paths.map((p) {
+              if (p.isWalking) return '도보';
+              if (p.isSubway) return '지하철:${p.subwayLineName}';
+              // 버스: 번호가 있으면 첫 번째만 도트 진행바에 표시
+              final nums = p.busNumbers;
+              return nums.isNotEmpty ? '버스:${nums.first}' : '버스';
+            }).toList()..add('도착')));
     final effectiveStep = sectionLabels.isNotEmpty ? _sectionCurrentStep() : currentStep;
 
     if (labels == null) {
@@ -3920,17 +4037,9 @@ class _RoutineStepDots extends StatelessWidget {
                           : null,
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: isCurrent
-                            ? AppColors.primary
-                            : AppColors.textSecondary,
-                        fontWeight: isCurrent
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                      ),
+                    _StepLabel(
+                      label: label,
+                      isCurrent: isCurrent,
                     ),
                   ],
                 ),
@@ -3952,18 +4061,67 @@ class _RoutineStepDots extends StatelessWidget {
 }
 
 // ───────────────────────────────────────────────
-// 공통 위젯: 경로 단계 항목
+// 진행 바 라벨: "버스:5535" → 두 줄로 분리해 표시
 // ───────────────────────────────────────────────
+class _StepLabel extends StatelessWidget {
+  final String label;
+  final bool isCurrent;
+  const _StepLabel({required this.label, required this.isCurrent});
+
+  /// "버스:5535" → ('버스', '5535')
+  /// "지하철:수도권 1호선" → ('지하철', '수도권 1호선')
+  /// "도보" / "도착" → ('도보', null)
+  (String, String?) _split() {
+    final colon = label.indexOf(':');
+    if (colon == -1) return (label, null);
+    return (label.substring(0, colon), label.substring(colon + 1));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final (top, sub) = _split();
+    final color = isCurrent ? AppColors.primary : AppColors.textSecondary;
+    final weight = isCurrent ? FontWeight.w600 : FontWeight.normal;
+
+    return Column(
+      children: [
+        Text(
+          top,
+          style: TextStyle(fontSize: 10, color: color, fontWeight: weight),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+        if (sub != null)
+          Text(
+            sub,
+            style: TextStyle(fontSize: 9, color: color, fontWeight: weight),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+            textAlign: TextAlign.center,
+          ),
+      ],
+    );
+  }
+}
+
+// ───────────────────────────────────────────────
+// 공통 위젯: 경로 단계 항목 (카드 행 방식)
+// ───────────────────────────────────────────────
+// 도보: 회색 배경 한 줄 / 버스: 연두 배경 / 지하철: 연파랑 배경
+// isCurrent=true 이면 좌측에 강조 border 추가
+// currentStationName 이 있으면 해당 정류장 하이라이트
 class _PathItem extends StatefulWidget {
   final PathModel path;
   final bool isCurrent;
   final bool isLast;
-  final String? currentStationName; // ✅ 현재 위치 정류장 이름 (하이라이트용)
+  final bool isFirst;
+  final String? currentStationName;
 
   const _PathItem({
     required this.path,
     required this.isCurrent,
     this.isLast = false,
+    this.isFirst = false,
     this.currentStationName,
   });
 
@@ -3977,14 +4135,12 @@ class _PathItemState extends State<_PathItem> {
   @override
   void initState() {
     super.initState();
-    // ✅ 현재 구간(버스/지하철)은 자동으로 정류장 목록 펼치기
     _expanded = widget.isCurrent && !widget.path.isWalking;
   }
 
   @override
   void didUpdateWidget(_PathItem oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 현재 구간으로 바뀌면 자동 펼치기
     if (widget.isCurrent && !widget.path.isWalking && !_expanded) {
       setState(() => _expanded = true);
     }
@@ -3994,270 +4150,247 @@ class _PathItemState extends State<_PathItem> {
   Widget build(BuildContext context) {
     final path = widget.path;
     final isCurrent = widget.isCurrent;
-    final isLast = widget.isLast;
 
-    final icon = path.isWalking
-        ? Icons.directions_walk
-        : path.isSubway
-        ? Icons.subway_outlined
-        : Icons.directions_bus_outlined;
-    final color = path.isWalking
-        ? AppColors.textSecondary
-        : path.isSubway
-        ? Colors.blue
-        : Colors.green;
-    final lineColor = path.isWalking
-        ? AppColors.border
-        : path.isSubway
-        ? Colors.blue.withValues(alpha: 0.4)
-        : Colors.green.withValues(alpha: 0.4);
+    final Color iconBg;
+    final Color iconColor;
+    final Color rowBg;
+    final Color chipTextColor;
+    final Color chipBg;
+
+    if (path.isWalking) {
+      iconBg        = AppColors.walkBg;
+      iconColor     = AppColors.walk;
+      rowBg         = Colors.white;
+      chipTextColor = AppColors.chipRoute;
+      chipBg        = AppColors.chipRouteBg;
+    } else if (path.isSubway) {
+      iconBg        = AppColors.subway;
+      iconColor     = Colors.white;
+      rowBg         = Colors.white;
+      chipTextColor = AppColors.chipRoute;
+      chipBg        = AppColors.chipRouteBg;
+    } else {
+      iconBg        = AppColors.bus;
+      iconColor     = Colors.white;
+      rowBg         = Colors.white;
+      chipTextColor = AppColors.chipRoute;
+      chipBg        = AppColors.chipRouteBg;
+    }
 
     return Container(
-      decoration: isCurrent
-          ? BoxDecoration(
-              color: color.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: color.withValues(alpha: 0.3)),
+      decoration: BoxDecoration(
+        color: rowBg,
+        border: Border(
+          left: isCurrent
+              ? BorderSide(
+                  color: path.isSubway ? AppColors.subway : AppColors.bus,
+                  width: 3,
+                )
+              : BorderSide.none,
+          top: widget.isFirst
+              ? BorderSide.none
+              : BorderSide(color: AppColors.border),
+          bottom: BorderSide.none,
+        ),
+      ),
+      padding: path.isWalking
+          ? const EdgeInsets.symmetric(horizontal: 12, vertical: 10)
+          : const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      child: path.isWalking
+          // ── 도보 행
+          ? Row(
+              children: [
+                if (isCurrent)
+                  Container(
+                    margin: const EdgeInsets.only(right: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text('현재',
+                        style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
+                  ),
+                Container(
+                  width: 28, height: 28,
+                  decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
+                  child: Icon(Icons.directions_walk, size: 15, color: iconColor),
+                ),
+                const SizedBox(width: 10),
+                const Text('도보',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary)),
+                const Spacer(),
+                _HomeChip(label: '${path.sectionTime}분', bg: AppColors.chipTimeBg, fg: AppColors.chipTime),
+              ],
             )
-          : null,
-      padding: isCurrent
-          ? const EdgeInsets.symmetric(horizontal: 6, vertical: 4)
-          : EdgeInsets.zero,
-      margin: isCurrent
-          ? const EdgeInsets.symmetric(vertical: 2)
-          : EdgeInsets.zero,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 36,
-            child: Column(
+          // ── 버스 / 지하철 행
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isCurrent ? color : color.withValues(alpha: 0.12),
-                    border: isCurrent
-                        ? Border.all(color: color, width: 2)
-                        : null,
-                  ),
+                  width: 28, height: 28,
+                  decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
                   child: Icon(
-                    icon,
-                    size: 16,
-                    color: isCurrent ? Colors.white : color,
+                    path.isSubway ? Icons.subway_outlined : Icons.directions_bus_outlined,
+                    size: 15, color: iconColor,
                   ),
                 ),
-                if (!isLast)
-                  Container(
-                    width: 2,
-                    height: 36,
-                    margin: const EdgeInsets.symmetric(vertical: 3),
-                    decoration: path.isWalking
-                        ? BoxDecoration(
-                            color: Colors.transparent,
-                            border: Border(
-                              left: BorderSide(
-                                color: lineColor,
-                                width: 2,
-                                style: BorderStyle.solid,
-                              ),
-                            ),
-                          )
-                        : BoxDecoration(color: lineColor),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(bottom: isLast ? 0 : 20, top: 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 현재 구간 배지
-                  if (isCurrent) ...[
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 4),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: color,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text(
-                        '현재 구간',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 현재 구간 배지
+                      if (isCurrent) ...[
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: path.isSubway ? AppColors.subway : AppColors.bus,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text('현재 구간',
+                              style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
                         ),
-                      ),
-                    ),
-                  ],
-                  // 출발/도착 정류장
-                  Text(
-                    (path.start != null && path.end != null)
-                        ? '${path.start} → ${path.end}'
-                        : path.typeLabel,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: isCurrent ? color : AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  // 노선 번호 칩
-                  if (!path.isWalking && path.no.isNotEmpty)
-                    Container(
-                      margin: const EdgeInsets.only(top: 2, bottom: 4),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        path.isSubway
-                            ? '${path.subwayLineName}${path.way != null ? " (${path.way})" : ""}'
-                            : '${path.no.first}번',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: color,
-                        ),
-                      ),
-                    ),
-                  Text(
-                    '${path.sectionTime}분'
-                    '${path.stationName.isNotEmpty
-                        ? ' · ${path.displayStationCount}정거장'
-                        : path.stationCount != null
-                        ? ' · ${path.stationCount}정거장'
-                        : ''}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  // 정거장 상세 펼치기 (버스/지하철만)
-                  if (!path.isWalking && path.stationName.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    GestureDetector(
-                      onTap: () => setState(() => _expanded = !_expanded),
-                      child: Row(
-                        children: [
-                          Text(
-                            _expanded
-                                ? '정류장 접기'
-                                : '정류장 ${path.stationName.length}개 보기',
+                      ],
+                      // 출발지
+                      if (path.start != null)
+                        Text(path.start!,
                             style: TextStyle(
-                              fontSize: 12,
-                              color: color,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          Icon(
-                            _expanded
-                                ? Icons.keyboard_arrow_up
-                                : Icons.keyboard_arrow_down,
-                            size: 14,
-                            color: color,
-                          ),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: isCurrent
+                                    ? (path.isSubway ? AppColors.subway : AppColors.bus)
+                                    : AppColors.textPrimary)),
+                      const SizedBox(height: 4),
+
+                      // 지하철: 노선명 칩(채운 파란 배경) + 방향 칩
+                      if (path.isSubway && path.no.isNotEmpty) ...[
+                        Wrap(
+                          spacing: 4, runSpacing: 4,
+                          children: [
+                            _HomeChip(label: path.subwayLineName, bg: AppColors.chipRouteBg, fg: AppColors.chipRoute),
+                            if (path.way != null && path.way!.isNotEmpty)
+                              _HomeChip(label: '${path.way} 방향', bg: AppColors.chipRouteBg, fg: AppColors.chipRoute),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                      ],
+
+                      // 버스: 번호 칩
+                      if (path.isBus && path.busNumbers.isNotEmpty) ...[
+                        Wrap(
+                          spacing: 4, runSpacing: 4,
+                          children: path.busNumbers
+                              .map((n) => _HomeChip(label: '${n}번', bg: AppColors.chipRouteBg, fg: AppColors.chipRoute))
+                              .toList(),
+                        ),
+                        const SizedBox(height: 4),
+                      ],
+
+                      // 시간 + 정거장
+                      Row(
+                        children: [
+                          _HomeChip(label: '${path.sectionTime}분', bg: AppColors.chipTimeBg, fg: AppColors.chipTime),
+                          if (path.displayStationCount > 0) ...[
+                            const SizedBox(width: 6),
+                            _HomeChip(label: '${path.displayStationCount}정거장', bg: AppColors.chipStopsBg, fg: AppColors.chipStops),
+                          ],
                         ],
                       ),
-                    ),
-                    if (_expanded) ...[
-                      const SizedBox(height: 6),
-                      ...path.stationName.map(
-                        (station) {
-                          // ✅ 현재 위치 정류장 하이라이트
-                          final isCurrentStation =
-                              widget.currentStationName != null &&
-                              station == widget.currentStationName;
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 3),
-                            child: Row(
-                              children: [
-                                // 현재 위치면 펄스 아이콘, 아니면 점
-                                if (isCurrentStation)
-                                  Container(
-                                    width: 18,
-                                    height: 18,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: color,
+
+                      // 정류장 목록 펼치기/접기
+                      if (path.stationName.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        GestureDetector(
+                          onTap: () => setState(() => _expanded = !_expanded),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _expanded ? '정류장 접기' : '정류장 ${path.stationName.length}개 보기',
+                                style: TextStyle(fontSize: 12, color: chipTextColor, fontWeight: FontWeight.w500),
+                              ),
+                              Icon(_expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                                  size: 14, color: chipTextColor),
+                            ],
+                          ),
+                        ),
+                        if (_expanded) ...[
+                          const SizedBox(height: 6),
+                          ...path.stationName.map((station) {
+                            final isCurrentStation = widget.currentStationName != null &&
+                                station == widget.currentStationName;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 3),
+                              child: Row(
+                                children: [
+                                  if (isCurrentStation)
+                                    Container(
+                                      width: 18, height: 18,
+                                      decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: chipTextColor),
+                                      child: const Icon(Icons.my_location, size: 10, color: Colors.white),
+                                    )
+                                  else
+                                    Container(
+                                      width: 6, height: 6,
+                                      margin: const EdgeInsets.only(left: 6),
+                                      decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: chipTextColor.withValues(alpha: 0.5)),
                                     ),
-                                    child: const Icon(
-                                      Icons.my_location,
-                                      size: 10,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                else
-                                  Container(
-                                    width: 6,
-                                    height: 6,
-                                    margin: const EdgeInsets.only(left: 6),
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: color.withValues(alpha: 0.5),
-                                    ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(station,
+                                        style: TextStyle(
+                                            fontSize: isCurrentStation ? 13 : 12,
+                                            fontWeight: isCurrentStation ? FontWeight.w700 : FontWeight.normal,
+                                            color: isCurrentStation ? chipTextColor : AppColors.textSecondary)),
                                   ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    station,
-                                    style: TextStyle(
-                                      fontSize: isCurrentStation ? 13 : 12,
-                                      fontWeight: isCurrentStation
-                                          ? FontWeight.w700
-                                          : FontWeight.normal,
-                                      color: isCurrentStation
-                                          ? color
-                                          : AppColors.textSecondary,
+                                  if (isCurrentStation)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                          color: chipTextColor.withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(4)),
+                                      child: Text('현재',
+                                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: chipTextColor)),
                                     ),
-                                  ),
-                                ),
-                                if (isCurrentStation)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: color.withValues(alpha: 0.12),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      '현재',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
-                                        color: color,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ],
+                      ],
                     ],
-                  ],
-                ],
-              ),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
     );
   }
 }
+
+// ── 홈 화면용 소형 칩 ───────────────────────────────────
+class _HomeChip extends StatelessWidget {
+  final String label;
+  final Color bg;
+  final Color fg;
+  const _HomeChip({required this.label, required this.bg, required this.fg});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+        child: Text(label,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
+      );
+}
+
+
 
 // ───────────────────────────────────────────────
 // 지도 줌 컨트롤 버튼

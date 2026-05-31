@@ -29,7 +29,13 @@ class RoutineListNotifier
 
   Future<void> deleteRoutine(int routineId) async {
     await _repository.deleteRoutine(routineId);
-    await load();
+    // 삭제 시 AsyncLoading을 띄우지 않고 현재 목록에서 바로 제거
+    final current = state.valueOrNull ?? [];
+    state = AsyncData(current.where((r) => r.routineId != routineId).toList());
+    // 백그라운드로 서버 목록 재동기화
+    _repository.getRoutines().then((fresh) {
+      state = AsyncData(fresh);
+    }).catchError((_) {});
   }
 
   Future<int> createRoutine(CreateRoutineRequest request) async {
@@ -50,9 +56,8 @@ final routineDetailProvider =
   return ref.watch(routineRepositoryProvider).getRoutineDetail(routineId);
 });
 
-// 주소 목록 — addressRepositoryProvider(/address API)를 watch해서
-// createAddress 후 invalidate 시 자동으로 재조회됩니다.
-final addressListProvider = FutureProvider<List<AddressModel>>((ref) {
+// 주소 목록 — AddressRepository를 통해 토큰 인터셉터 정상 동작 보장
+final addressListProvider = FutureProvider<List<AddressModel>>((ref) async {
   return ref.read(addressRepositoryProvider).getAddresses();
 });
 

@@ -132,7 +132,7 @@ class _RoutineListScreenState extends ConsumerState<RoutineListScreen> {
   Future<void> _confirmDelete(BuildContext context, RoutineModel routine) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('루틴 삭제',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
@@ -140,12 +140,12 @@ class _RoutineListScreenState extends ConsumerState<RoutineListScreen> {
             style: const TextStyle(fontSize: 14, color: AppColors.textSecondary)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => dialogContext.pop(false),
             child: const Text('취소',
                 style: TextStyle(color: AppColors.textSecondary)),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => dialogContext.pop(true),
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
             child: const Text('삭제'),
           ),

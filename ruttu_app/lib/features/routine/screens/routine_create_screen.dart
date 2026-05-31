@@ -120,7 +120,7 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
     }
   }
 
-  Future<void> _showRouteDetail(RouteModel summary) async {
+  Future<void> _showRouteDetail(RouteModel summary, int index) async {
     RouteModel detail = summary;
     try {
       detail = await ref
@@ -128,21 +128,28 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
           .getRouteDetail(summary.recoId);
     } catch (_) {}
     if (!mounted) return;
-    showModalBottomSheet(
+    final selected = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (_) => DraggableScrollableSheet(
         expand: false,
         initialChildSize: 0.75,
         maxChildSize: 0.95,
-        builder: (_, controller) => _RouteDetailSheet(
-          route: detail,
-          scrollController: controller,
+        builder: (_, controller) => Container(
+          color: Colors.white,
+          child: _RouteDetailSheet(
+            route: detail,
+            scrollController: controller,
+          ),
         ),
       ),
     );
+    if (selected == true && mounted) {
+      setState(() => _selectedRouteIndex = index);
+    }
   }
 
   // GPS sendLiveLocation 관련:
@@ -194,11 +201,10 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
       }
       // ✅ 루틴 생성/수정 후 홈 화면 추천 경로 재조회
       if (mounted) {
-        // routineDetailProvider 캐시 무효화 (수정 즉시 반영)
         ref.invalidate(routineDetailProvider);
         ref.invalidate(routineListProvider);
-        // homeProvider 갱신 후 pop (await로 완료 보장)
-        await ref.read(homeProvider.notifier).refresh();
+        // homeProvider는 await 없이 백그라운드 갱신
+        ref.read(homeProvider.notifier).refresh();
         if (mounted) context.pop();
       }
     } on DioException catch (e) {
@@ -870,7 +876,7 @@ class _Step3 extends StatelessWidget {
   final bool isLoading;
   final int? selectedIndex;
   final void Function(int) onSelect;
-  final Future<void> Function(RouteModel) onDetail;
+  final Future<void> Function(RouteModel, int) onDetail;
   final VoidCallback onSave;
   final VoidCallback onBack;
   final String routineName;
@@ -943,7 +949,7 @@ class _Step3 extends StatelessWidget {
                     index: e.key,
                     isSelected: selectedIndex == e.key,
                     onTap: () => onSelect(e.key),
-                    onDetail: () => onDetail(e.value),
+                    onDetail: onDetail,
                   )),
             ],
           ),
@@ -983,7 +989,7 @@ class _RouteOptionCard extends StatelessWidget {
   final int index;
   final bool isSelected;
   final VoidCallback onTap;
-  final VoidCallback onDetail;
+  final Future<void> Function(RouteModel, int) onDetail;
 
   const _RouteOptionCard({
     required this.route,
@@ -1022,7 +1028,7 @@ class _RouteOptionCard extends StatelessWidget {
                 // 교통수단 칩 row
                 Expanded(child: _TransitChips(paths: route.path)),
                 TextButton(
-                  onPressed: onDetail,
+                  onPressed: () => onDetail(route, index),
                   style: TextButton.styleFrom(
                       foregroundColor: AppColors.secondary,
                       minimumSize: Size.zero,
@@ -1089,30 +1095,45 @@ class _TransitChips extends StatelessWidget {
 
     return Wrap(
       spacing: 4,
+      runSpacing: 4,
       children: [
         for (int i = 0; i < paths.length; i++) ...[
           if (paths[i].isWalking)
             const Icon(Icons.directions_walk,
                 size: 18, color: AppColors.textSecondary)
-          else
+          else if (paths[i].isSubway)
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 8, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: paths[i].isSubway
-                    ? Colors.blue.withValues(alpha: 0.12)
-                    : Colors.green.withValues(alpha: 0.12),
+                color: AppColors.subwayBg,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                paths[i].isSubway
-                    ? '${paths[i].no.isNotEmpty ? paths[i].no.first : ''}호선'
-                    : '${paths[i].no.isNotEmpty ? paths[i].no.first : ''}번',
-                style: TextStyle(
+                paths[i].subwayLineName,
+                style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: paths[i].isSubway ? Colors.blue : Colors.green),
+                    color: AppColors.subway),
               ),
+            )
+          else
+            // 버스: no 목록의 모든 번호를 각각 칩으로 표시
+            Wrap(
+              spacing: 4,
+              children: paths[i].no.map((busNo) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.busBg,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '$busNo번',
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.bus),
+                ),
+              )).toList(),
             ),
           if (i < paths.length - 1 && nonWalking.isNotEmpty)
             const Icon(Icons.arrow_forward,
@@ -1137,60 +1158,49 @@ class _RouteDetailSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // 드래그 핸들 + 헤더
+        // 드래그 핸들
         Container(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-          ),
-          child: Column(
+          width: 40, height: 4,
+          margin: const EdgeInsets.only(top: 12, bottom: 16),
+          decoration: BoxDecoration(
+              color: AppColors.border,
+              borderRadius: BorderRadius.circular(2)),
+        ),
+        // 헤더 (좌우 padding 16 통일)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          child: Row(
             children: [
-              Center(
-                child: Container(
-                  width: 40, height: 4,
-                  decoration: BoxDecoration(
-                      color: AppColors.border,
-                      borderRadius: BorderRadius.circular(2)),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  const Text('경로 상세',
-                      style: TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.w700)),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(context),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Text('${route.totalTime}분',
-                      style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.primary)),
-                  const SizedBox(width: 12),
-                  Text('${route.payment}원',
-                      style: const TextStyle(color: AppColors.textSecondary)),
-                ],
+              const Text('경로 상세',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              Text('${route.totalTime}분',
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primary)),
+              const Text('  ·  ',
+                  style: TextStyle(color: AppColors.textSecondary)),
+              Text('${route.payment}원',
+                  style: const TextStyle(
+                      fontSize: 14, color: AppColors.textSecondary)),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                onPressed: () => Navigator.pop(context),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
               ),
             ],
           ),
         ),
-        const Divider(height: 1),
+        const SizedBox(height: 12),
+        const Divider(height: 1, thickness: 1, color: AppColors.border),
         // 단계별 리스트
         Expanded(
           child: ListView(
             controller: scrollController,
-            padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.of(context).padding.bottom),
+            padding: EdgeInsets.fromLTRB(16, 20, 16, 20 + MediaQuery.of(context).padding.bottom),
             children: [
               ...route.path.asMap().entries.map((e) =>
                   _DetailPathItem(
@@ -1199,10 +1209,10 @@ class _RouteDetailSheet extends StatelessWidget {
             ],
           ),
         ),
-        // 하단 합계 바
-        Container(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-          color: AppColors.background,
+        // 하단 합계 바 (border 없이 배경색으로만 구분)
+        const Divider(height: 1, thickness: 1, color: AppColors.border),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -1220,7 +1230,7 @@ class _RouteDetailSheet extends StatelessWidget {
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => Navigator.pop(context, true),
                 child: const Text('이 경로 선택하기'),
               ),
             ),
@@ -1247,26 +1257,31 @@ class _DetailPathItemState extends State<_DetailPathItem> {
   Widget build(BuildContext context) {
     final path = widget.path;
     final isLast = widget.isLast;
-    final color = path.isWalking
+
+    // 교통수단별 색상 — AppColors 통일
+    final Color color = path.isWalking
         ? AppColors.textSecondary
         : path.isSubway
-            ? Colors.blue
-            : Colors.green;
+            ? AppColors.subway
+            : AppColors.bus;
+    final Color chipBg = path.isWalking
+        ? AppColors.walkBg
+        : path.isSubway
+            ? AppColors.subwayBg
+            : AppColors.busBg;
+
     final icon = path.isWalking
         ? Icons.directions_walk
         : path.isSubway
             ? Icons.subway_outlined
             : Icons.directions_bus_outlined;
 
+    // 타이틀: 승차역 이름만 (노선명은 칩으로)
     final String title = path.isWalking
         ? '도보'
-        : path.isSubway
-            ? '${path.start ?? ''} 승차 — ${path.no.isNotEmpty ? path.no.first : ''}호선'
-            : '${path.start ?? ''} 승차 — ${path.no.isNotEmpty ? path.no.first : ''}번';
-
-    final String subtitle = '${path.sectionTime}분'
-        '${path.stationCount != null ? ' · ${path.stationCount}정거장' : ''}'
-        '${path.way != null ? ' · ${path.way}' : ''}';
+        : path.start != null && path.start!.isNotEmpty
+            ? '${path.start} 승차'
+            : path.isSubway ? '지하철 승차' : '버스 승차';
 
     final bool hasStations = path.stationName.isNotEmpty;
 
@@ -1280,7 +1295,7 @@ class _DetailPathItemState extends State<_DetailPathItem> {
               width: 36, height: 36,
               decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: color.withValues(alpha: 0.12)),
+                  color: color.withValues(alpha: 0.15)),
               child: Icon(icon, size: 18, color: color),
             ),
             if (!isLast)
@@ -1302,7 +1317,7 @@ class _DetailPathItemState extends State<_DetailPathItem> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 제목 행 (정거장 있으면 클릭 시 토글)
+                // 제목 행
                 GestureDetector(
                   onTap: hasStations
                       ? () => setState(() => _expanded = !_expanded)
@@ -1326,46 +1341,93 @@ class _DetailPathItemState extends State<_DetailPathItem> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 4),
-                Row(
+                const SizedBox(height: 6),
+                // 칩 영역: 지하철 노선 + 방향 / 버스 번호
+                if (path.isSubway && path.no.isNotEmpty) ...[
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      // 노선명 칩 → 다크
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.chipRouteDetailBg,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(path.subwayLineName,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.chipRouteDetail)),
+                      ),
+                      // 방향 칩 → 원래 오렌지
+                      if (path.way != null && path.way!.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: chipBg,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text('${path.way} 방향',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: color)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                if (path.isBus && path.busNumbers.isNotEmpty) ...[
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    // 버스 번호 칩 → 다크
+                    children: path.busNumbers.map((n) => Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.chipRouteDetailBg,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text('${n}번',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.chipRouteDetail)),
+                    )).toList(),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                // 시간 + 정거장 수 칩
+                Wrap(
+                  spacing: 6,
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFE3F0FC),
+                        color: AppColors.subwayBg,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Text(
-                        '${path.sectionTime}분',
-                        style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF1155CC)),
-                      ),
+                      child: Text('${path.sectionTime}분',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.subway)),
                     ),
-                    if (hasStations) ...[
-                      const SizedBox(width: 6),
+                    if (hasStations)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFE6F4EA),
+                          color: AppColors.busBg,
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: Text(
-                          path.stationCountLabel,
-                          style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF1E6B30)),
-                        ),
+                        child: Text(path.stationCountLabel,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.bus)),
                       ),
-                    ],
-                    if (path.way != null) ...[
-                      const SizedBox(width: 6),
-                      Text(path.way!,
-                          style: const TextStyle(
-                              fontSize: 12, color: AppColors.textSecondary)),
-                    ],
                   ],
                 ),
                 // 정류장 수직 목록 (펼쳤을 때)
@@ -1373,8 +1435,7 @@ class _DetailPathItemState extends State<_DetailPathItem> {
                   const SizedBox(height: 8),
                   ...path.stationName.asMap().entries.map((e) {
                     final isFirst = e.key == 0;
-                    final isLastStation =
-                        e.key == path.stationName.length - 1;
+                    final isLastStation = e.key == path.stationName.length - 1;
                     return Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1389,8 +1450,7 @@ class _DetailPathItemState extends State<_DetailPathItem> {
                                   color: (isFirst || isLastStation)
                                       ? color
                                       : color.withValues(alpha: 0.3),
-                                  border:
-                                      Border.all(color: color, width: 1.5),
+                                  border: Border.all(color: color, width: 1.5),
                                 ),
                               ),
                               if (!isLastStation)

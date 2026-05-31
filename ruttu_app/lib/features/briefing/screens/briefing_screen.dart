@@ -645,34 +645,52 @@ class _MeetingRouteCard extends StatelessWidget {
                     }
                     final color = p.isSubway
                         ? _lineColor(p.no.isNotEmpty ? p.no.first : null)
-                        : Colors.blue;
-                    final label = p.isSubway
-                        ? '${p.no.isNotEmpty ? p.no.first : ''}호선'
-                        : '버스 ${p.no.isNotEmpty ? p.no.first : ''}';
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
+                        : Colors.green;
+                    if (p.isSubway) {
+                      // 지하철: subwayLineName 사용 (호선 중복 방어)
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(width: 8, height: 8,
+                              decoration: BoxDecoration(shape: BoxShape.circle, color: color)),
+                            const SizedBox(width: 4),
+                            Text(p.subwayLineName,
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+                          ],
+                        ),
+                      );
+                    } else {
+                      // 버스: no 전체를 강챔 치프로 표시
+                      return Wrap(
+                        spacing: 4,
+                        runSpacing: 2,
+                        children: p.no.where((n) => n.isNotEmpty).map((n) =>
                           Container(
-                            width: 8, height: 8,
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                                shape: BoxShape.circle, color: color),
+                              color: color.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(width: 8, height: 8,
+                                  decoration: BoxDecoration(shape: BoxShape.circle, color: color)),
+                                const SizedBox(width: 4),
+                                Text('${n}번',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+                              ],
+                            ),
                           ),
-                          const SizedBox(width: 4),
-                          Text(label,
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: color)),
-                        ],
-                      ),
-                    );
+                        ).toList(),
+                      );
+                    }
                   }).toList(),
                 ),
                 const SizedBox(height: 12),

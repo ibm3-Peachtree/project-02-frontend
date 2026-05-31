@@ -31,13 +31,17 @@ class ApiConstants {
       '/me/routines/routes/recommend/$recoId';
 
   // ── 6. Live Routine ──────────────────────────────────────
-  static const liveStatus         = '/me/routines/active/status';
-  static const liveMyRoute        = '/me/routines/active/route';
-  static const liveRecoRoute      = '/me/routines/active/reco';
-  static const liveCurrentSection = '/me/routines/active/location';
+  static const liveStatus              = '/me/routines/active/status';
+  static const liveMyRoute             = '/me/routines/active/route';
+  static const liveRecoRoute           = '/me/routines/active/reco';
+  static const liveCurrentSection      = '/me/routines/active/location/my';
+  static const liveCurrentSectionReco  = '/me/routines/active/location/reco';
   // PATCH /me/routines/active — LiveLocationController 실제 endpoint
-  static const liveLocation       = '/me/routines/active';
-  static const routineComplete    = '/me/routines/active/complete';
+  static const liveLocation            = '/me/routines/active';
+  static const routineCompleteMyRoute  = '/me/routines/active/complete/my';
+  static const routineCompleteRecoRoute = '/me/routines/active/complete/reco';
+  /// 하위 호환 — 기존 코드가 참조하는 경우 my 엔드포인트로 연결
+  static const routineComplete         = routineCompleteMyRoute;
   static const todayIssues        = '/me/issues';
 
   // ── 7. Report ────────────────────────────────────────────
