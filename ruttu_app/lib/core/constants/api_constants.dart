@@ -21,8 +21,8 @@ class ApiConstants {
   static String addressById(int id) => '/address/$id';
 
   // ── 4. Notification / Settings ───────────────────────────
-  static const notificationSettings = '/users/me/settings';
-  static const updateSettings = '/settings';
+  static const notification = '/notifications';  // GET
+  static const updateNotification = '/notifications';  // PUT
 
   // ── 5. Routine ───────────────────────────────────────────
   static const routines = '/me/routines';

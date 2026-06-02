@@ -81,7 +81,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       final googleSignIn = GoogleSignIn(
-        scopes: ['openid', 'email', 'profile'],
+        scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.readonly'],
         serverClientId: EnvConfig.googleServerClientId,
       );
       final googleUser = await googleSignIn.signIn();
