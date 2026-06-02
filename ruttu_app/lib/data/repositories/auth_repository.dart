@@ -11,6 +11,7 @@ class LoginResponse {
   final String email;
   final String nickname;
   final bool isNew;
+  final String status; // "ACTIVE" | "DORMANT"
 
   const LoginResponse({
     required this.accessToken,
@@ -19,15 +20,17 @@ class LoginResponse {
     required this.email,
     required this.nickname,
     this.isNew = false,
+    this.status = 'ACTIVE',
   });
 
   factory LoginResponse.fromJson(Map<String, dynamic> json) => LoginResponse(
-        accessToken: json['accessToken'] as String,
-        refreshToken: json['refreshToken'] as String,
-        userId: json['userId'] as int,
-        email: json['email'] as String,
-        nickname: json['nickname'] as String,
-        isNew: json['isNew'] as bool? ?? false,
+        accessToken:  json['accessToken']  as String? ?? '',
+        refreshToken: json['refreshToken'] as String? ?? '',
+        userId:       json['userId']       as int?    ?? 0,
+        email:        json['email']        as String? ?? '',
+        nickname:     json['nickname']     as String? ?? '',
+        isNew:        json['isNew']        as bool?   ?? false,
+        status:       json['status']       as String? ?? 'ACTIVE',
       );
 }
 
@@ -36,9 +39,11 @@ abstract class AuthRepository {
   Future<void> updateNickname(String nickname);
   Future<bool> isNicknameAvailable(String nickname);
   Future<UserModel?> getCachedUser();
+  Future<UserModel> getMyInfo();           // GET /users/me
   Future<void> signOut(String refreshToken);
   Future<void> deleteAccount();
-  Future<LoginResponse> refreshToken(String refreshToken); // 추가
+  Future<LoginResponse> refreshToken(String refreshToken);
+  Future<void> restoreUser(int userId, {String? idToken});    // POST /auth/restore
 }
 
 class ApiAuthRepository implements AuthRepository {
@@ -47,19 +52,20 @@ class ApiAuthRepository implements AuthRepository {
 
   ApiAuthRepository(this._dio);
 
+  String? _lastIdToken; // DORMANT/WITHDRAWN 복구 시 재사용
+
   @override
   Future<LoginResponse> signInWithGoogle(String idToken) async {
-    debugPrint("🔥 API 호출 시작");
+    _lastIdToken = idToken; // 복구용으로 저장
     final res = await _dio.post(
       ApiConstants.googleLogin, // '/auth/google'
       data: {'idToken': idToken},
     );
-    debugPrint("🔥 API 응답 옴");
     final loginRes = LoginResponse.fromJson(res.data);
     // 로그인 성공 시 유저 캐싱
     _cachedUser = UserModel(
       userId: loginRes.userId,
-      email: loginRes.email,   // 서버 응답에 있으면 res.data['email']로 교체
+      email: loginRes.email,
       nickname: null,
     );
     return loginRes;
@@ -67,10 +73,12 @@ class ApiAuthRepository implements AuthRepository {
 
   @override
   Future<void> updateNickname(String nickname) async {
-    await _dio.put(
-      ApiConstants.updateNickname, // '/users/mypage/nickname'
+    // PATCH /users/nickname  →  body: { "nickname": "..." }
+    await _dio.patch(
+      ApiConstants.updateNickname,
       data: {'nickname': nickname},
     );
+    // 로컬 캐시도 즉시 갱신
     if (_cachedUser != null) {
       _cachedUser = _cachedUser!.copyWith(nickname: nickname);
     }
@@ -78,8 +86,7 @@ class ApiAuthRepository implements AuthRepository {
 
   @override
   Future<bool> isNicknameAvailable(String nickname) async {
-    // 서버는 PUT 시 409로 중복 처리 → 여기선 항상 true 반환
-    // 실제 중복은 updateNickname()의 DioException catch에서 처리
+    // 서버는 PATCH 시 409로 중복 처리 → 여기선 항상 true 반환
     return true;
   }
 
@@ -87,9 +94,36 @@ class ApiAuthRepository implements AuthRepository {
   Future<UserModel?> getCachedUser() async => _cachedUser;
 
   @override
+  Future<UserModel> getMyInfo() async {
+    // GET /users/me → { email, nickname } 또는 { data: { email, nickname } }
+    final res = await _dio.get(ApiConstants.getMyInfo);
+    final raw = res.data;
+
+    // 서버 응답이 { data: {...} } 래퍼일 수도 있고 flat 일 수도 있으므로 양쪽 처리
+    final Map<String, dynamic> data;
+    if (raw is Map<String, dynamic>) {
+      data = (raw['data'] is Map<String, dynamic>)
+          ? raw['data'] as Map<String, dynamic>
+          : raw;
+    } else {
+      data = {};
+    }
+
+    final user = UserModel(
+      userId: _cachedUser?.userId ?? 0,
+      email: (data['email'] as String?)?.isNotEmpty == true
+          ? data['email'] as String
+          : _cachedUser?.email ?? '',
+      nickname: data['nickname'] as String?,
+    );
+    _cachedUser = user;
+    return user;
+  }
+
+  @override
   Future<void> signOut(String refreshToken) async {
     await _dio.post(
-      ApiConstants.logout, // '/auth/logout'
+      ApiConstants.logout,
       data: {'refreshToken': refreshToken},
     );
     _cachedUser = null;
@@ -97,7 +131,7 @@ class ApiAuthRepository implements AuthRepository {
 
   @override
   Future<void> deleteAccount() async {
-    await _dio.delete(ApiConstants.deleteAccount); // '/users/me'
+    await _dio.delete(ApiConstants.deleteAccount); // DELETE /users/me
     _cachedUser = null;
   }
 
@@ -108,6 +142,21 @@ class ApiAuthRepository implements AuthRepository {
       data: {'refreshToken': refreshToken},
     );
     return LoginResponse.fromJson(res.data);
+  }
+
+  @override
+  Future<void> restoreUser(int userId, {String? idToken}) async {
+    // POST /auth/restore — 탈퇴/휴먼 계정은 액세스 토큰이 없으므로
+    // 인터셉터가 없는 별도 Dio로 호출해 Authorization 헤더를 붙이지 않음
+    final plainDio = Dio(BaseOptions(
+      baseUrl: _dio.options.baseUrl,
+      headers: const {'Content-Type': 'application/json'},
+    ));
+    final token = idToken ?? _lastIdToken;
+    final body = <String, dynamic>{};
+    if (userId != 0) body['userId'] = userId;
+    if (token != null) body['idToken'] = token;
+    await plainDio.post('/auth/restore', data: body);
   }
 }
 
@@ -153,6 +202,10 @@ class MockAuthRepository implements AuthRepository {
   Future<UserModel?> getCachedUser() async => _cachedUser;
 
   @override
+  Future<UserModel> getMyInfo() async =>
+      _cachedUser ?? const UserModel(userId: 0, email: '', nickname: null);
+
+  @override
   Future<void> signOut(String refreshToken) async {
     _cachedUser = null;
   }
@@ -164,5 +217,11 @@ class MockAuthRepository implements AuthRepository {
     @override
   Future<LoginResponse> refreshToken(String refreshToken) {
     throw UnimplementedError();
+  }
+
+  @override
+  @override
+  Future<void> restoreUser(int userId, {String? idToken}) async {
+    // mock: no-op
   }
 }

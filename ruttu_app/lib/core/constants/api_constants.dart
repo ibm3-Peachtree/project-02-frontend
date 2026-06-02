@@ -12,8 +12,9 @@ class ApiConstants {
   static const refreshToken = '/auth/refresh';
 
   // ── 2. User ──────────────────────────────────────────────
-  static const deleteAccount = '/users/me';
-  static const updateNickname = '/users/mypage/nickname';
+  static const getMyInfo     = '/users/me';          // GET
+  static const deleteAccount = '/users/me';          // DELETE
+  static const updateNickname = '/users/nickname';   // PATCH
 
   // ── 3. Address ───────────────────────────────────────────
   static const addresses = '/address';
@@ -34,6 +35,8 @@ class ApiConstants {
   static const liveStatus              = '/me/routines/active/status';
   static const liveMyRoute             = '/me/routines/active/route';
   static const liveRecoRoute           = '/me/routines/active/reco';
+  static const liveRecoRouteList       = '/me/routines/active/reco';           // GET  — 추천 경로 목록
+  static String liveRecoSave(int recoId) => '/me/routines/active/reco/$recoId'; // POST — 추천 경로 저장
   static const liveCurrentSection      = '/me/routines/active/location/my';
   static const liveCurrentSectionReco  = '/me/routines/active/location/reco';
   // PATCH /me/routines/active — LiveLocationController 실제 endpoint

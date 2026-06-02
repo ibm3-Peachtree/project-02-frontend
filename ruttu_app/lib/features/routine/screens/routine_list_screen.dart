@@ -265,53 +265,106 @@ class _RoutineCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              // 요일 칩
+              // 요일 칩 + 공휴일 칩
               Wrap(
                 spacing: 4,
-                children: routine.dayLabelsKo.map((label) {
-                  return Container(
+                runSpacing: 4,
+                children: [
+                  ...routine.dayLabelsKo.map((label) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(label,
+                          style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                              fontWeight: FontWeight.w500)),
+                    );
+                  }),
+                  // excludeHoliday(skipHoliday)=true: 공휴일 제외 (강조 표시)
+                  // excludeHoliday(skipHoliday)=false: 칩 표시 안 함
+                  if (routine.skipHoliday)
+                  Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
-                      color: AppColors.border,
+                      color: const Color(0xFFE8F4FF),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Text(label,
-                        style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textSecondary,
-                            fontWeight: FontWeight.w500)),
-                  );
-                }).toList(),
+                    child: const Text(
+                      '공휴일 제외',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF1565C0),
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 10),
               // 시간 정보
               Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Icon(Icons.access_time,
-                      size: 14, color: AppColors.textSecondary),
-                  const SizedBox(width: 4),
-                  Text(
-                    '목표 도착 ${routine.targetArrivalTime}',
-                    style: const TextStyle(
-                        fontSize: 13, color: AppColors.textSecondary),
+                  // 왼쪽: 목표 도착 + 예상 시간 (Column으로 감싸 수직 중앙 기준 맞춤)
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                                                const SizedBox(height: 2),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.directions_run,
+                                size: 14, color: AppColors.textSecondary),
+                            const SizedBox(width: 4),
+                            Text(
+                              '예상 ${routine.estimatedDuration}분',
+                              style: const TextStyle(
+                                  fontSize: 13, color: AppColors.textSecondary),
+                            ),
+                          ],
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.access_time,
+                                size: 14, color: AppColors.textSecondary),
+                            const SizedBox(width: 4),
+                            Text(
+                              '목표 도착 ${routine.targetArrivalTime}',
+                              style: const TextStyle(
+                                  fontSize: 13, color: AppColors.textSecondary),
+                            ),
+                          ],
+                        ),
+
+                      ],
+                    ),
                   ),
-                  const SizedBox(width: 12),
-                  const Icon(Icons.directions_run,
-                      size: 14, color: AppColors.textSecondary),
-                  const SizedBox(width: 4),
-                  Text(
-                    '예상 ${routine.estimatedDuration}분',
-                    style: const TextStyle(
-                        fontSize: 13, color: AppColors.textSecondary),
-                  ),
-                  const Spacer(),
-                  Text(
-                    '권장 출발 시간: ${routine.recommendedDepartureTime}',
-                    style: const TextStyle(
-                        fontSize: 13,
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w600),
+                  // 오른쪽: 여유시간 배지 + 권장 출발 시간
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _InfoBadge(
+                        icon: Icons.timer_outlined,
+                        label: '여유 ${routine.spareTime}분',
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '권장 출발 시간: ${routine.recommendedDepartureTime}',
+                        style: const TextStyle(
+                            fontSize: 13,
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -350,6 +403,40 @@ class _RoutineCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── 정보 배지 (여유 시간 / 공휴일 제외) ────────────────
+class _InfoBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _InfoBadge({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: AppColors.primary),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              color: AppColors.primary,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }

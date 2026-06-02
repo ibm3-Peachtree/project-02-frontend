@@ -159,30 +159,33 @@ class AccountManageScreen extends ConsumerWidget {
                     TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
           ],
         ),
-        content: const Column(
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              '탈퇴하면 아래 데이터가 모두 삭제되며\n복구할 수 없어요.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  fontSize: 14, color: AppColors.textSecondary),
-            ),
-            SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Column(
+            const SizedBox(height: 4),
+            // 30일 복구 안내 배너
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF8E1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFFFE082)),
+              ),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('• 등록된 모든 루틴',
+                  const Icon(Icons.info_outline_rounded,
+                      size: 16, color: Color(0xFFF59E0B)),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      '탈퇴 후 30일 이내에 같은 계정으로 로그인하면 계정을 복구할 수 있어요.',
                       style: TextStyle(
-                          fontSize: 13, color: AppColors.textSecondary)),
-                  Text('• 경로 이용 기록 및 리포트',
-                      style: TextStyle(
-                          fontSize: 13, color: AppColors.textSecondary)),
-                  Text('• 작성한 커뮤니티 글 및 댓글',
-                      style: TextStyle(
-                          fontSize: 13, color: AppColors.textSecondary)),
+                          fontSize: 12,
+                          color: Color(0xFF92400E),
+                          height: 1.5),
+                    ),
+                  ),
                 ],
               ),
             ),

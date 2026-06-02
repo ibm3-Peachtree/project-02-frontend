@@ -4,6 +4,7 @@ class RouteConstants {
   static const splash = '/';
   static const nicknameSetup = '/nickname-setup';
   static const onboarding = '/onboarding';
+  static const dormantRestore = '/dormant-restore'; // 휴먼 계정 복구 화면
   static const home = '/home';
   static const routine = '/routine';
   static const routineDetail = '/routine/:id';

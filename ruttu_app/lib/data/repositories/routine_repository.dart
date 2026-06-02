@@ -16,6 +16,8 @@ class CreateRoutineRequest {
   final String destination;
   final int recoId;
   final List<String> days;
+  final int spareTime;
+  final bool skipHoliday;
 
   const CreateRoutineRequest({
     required this.routineName,
@@ -26,6 +28,8 @@ class CreateRoutineRequest {
     required this.destination,
     required this.recoId,
     required this.days,
+    this.spareTime = 15,
+    this.skipHoliday = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -37,6 +41,8 @@ class CreateRoutineRequest {
         'destination': destination,
         'recoId': recoId,
         'dow': _daysToDow(days),
+        'spareTime': spareTime,
+        'excludeHoliday': skipHoliday,
       };
 
   static String _toLocalTime(String hhmm) {

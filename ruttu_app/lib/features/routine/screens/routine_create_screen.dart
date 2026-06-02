@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/constants/route_constants.dart';
 import '../../../core/widgets/kakao_postcode_page.dart';
 import '../../../data/models/address_model.dart';
 import '../../../data/models/routine_model.dart';
@@ -29,6 +30,8 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
   final _step1Key = GlobalKey<FormState>();
   final Set<String> _selectedDays = {};
   TimeOfDay _targetArrivalTime = const TimeOfDay(hour: 9, minute: 0);
+  int _spareTime = 15; // 여유 시간 (분)
+  bool _skipHoliday = false; // 공휴일 제외
 
   // Step 2
   AddressModel? _departure;
@@ -51,6 +54,8 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
     if (routine != null) {
       _nameController.text = routine.routineName;
       _selectedDays.addAll(routine.days);
+      _spareTime = routine.spareTime;
+      _skipHoliday = routine.skipHoliday;
       final parts = routine.targetArrivalTime.split(':');
       _targetArrivalTime = TimeOfDay(
           hour: int.parse(parts[0]), minute: int.parse(parts[1]));
@@ -190,6 +195,8 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
       destination: _arrival!.address,
       recoId: recoId,
       days: _selectedDays.toList(),
+      spareTime: _spareTime,
+      skipHoliday: _skipHoliday,
     );
     try {
       if (widget.editRoutine != null) {
@@ -202,7 +209,8 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
       // ✅ 루틴 생성/수정 후 홈 화면 추천 경로 재조회
       if (mounted) {
         ref.invalidate(routineDetailProvider);
-        ref.invalidate(routineListProvider);
+        // routineListProvider는 create/update 내부에서 이미 AsyncData로 갱신하므로
+        // invalidate 금지 (무한 로딩 유발)
         // homeProvider는 await 없이 백그라운드 갱신
         ref.read(homeProvider.notifier).refresh();
         if (mounted) context.pop();
@@ -271,15 +279,21 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
           ),
         );
       } else {
-        final msg = serverMessage.isNotEmpty ? serverMessage : '루틴 저장에 실패했어요. (${e.response?.statusCode})';
+        // 보안상 서버 에러 상세 코드/메시지 노출 방지
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), backgroundColor: AppColors.error),
+          const SnackBar(
+            content: Text('루틴 저장에 실패했어요. 잠시 후 다시 시도해주세요.'),
+            backgroundColor: AppColors.error,
+          ),
         );
       }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('루틴 저장에 실패했어요: $e'), backgroundColor: AppColors.error),
+        const SnackBar(
+          content: Text('루틴 저장에 실패했어요. 잠시 후 다시 시도해주세요.'),
+          backgroundColor: AppColors.error,
+        ),
       );
     }
   }
@@ -316,34 +330,81 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
                     ?.where((r) => r.routineId != widget.editRoutine?.routineId)
                     .map((r) => r.routineName)
                     .toList() ?? [],
-                onNext: () {
+                spareTime: _spareTime,
+                onSpareTimeChanged: (v) => setState(() => _spareTime = v),
+                skipHoliday: _skipHoliday,
+                onSkipHolidayChanged: (v) => setState(() => _skipHoliday = v),
+                onNext: () async {
                   if (!_step1Key.currentState!.validate()) return;
                   if (_selectedDays.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('요일을 하나 이상 선택해주세요.')));
                     return;
                   }
-                  // 동시간대 프론트 체크
+                  // 동시간대 프론트 체크 — 중복 루틴이 있으면 수정 유도 다이얼로그 표시
                   final conflictRoutine = (ref.read(routineListProvider).valueOrNull ?? [])
                       .where((r) => r.routineId != widget.editRoutine?.routineId)
                       .where((r) => r.targetArrivalTime == _arrivalTimeStr)
                       .where((r) => r.days.any((d) => _selectedDays.contains(d)))
                       .firstOrNull;
                   if (conflictRoutine != null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
+                    final overlappingDays = _selectedDays
+                        .where((d) => conflictRoutine.days.contains(d))
+                        .map((d) {
+                          const map = {
+                            'MON': '월', 'TUE': '화', 'WED': '수',
+                            'THU': '목', 'FRI': '금', 'SAT': '토', 'SUN': '일',
+                          };
+                          return map[d] ?? d;
+                        })
+                        .join(', ');
+
+                    final action = await showDialog<String>(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
+                        title: const Text('같은 시간대 루틴이 있어요',
+                            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                         content: Text(
-                          '$_arrivalTimeStr 에 이미 \'${conflictRoutine.routineName}\' 루틴이 있어요. '
-                          '시간을 겹치지 않게 설정해주세요.',
+                          '[$overlappingDays] $_arrivalTimeStr 에\n'
+                          "'${conflictRoutine.routineName}' 루틴이 이미 등록되어 있어요.\n\n"
+                          '기존 루틴을 수정하거나, 이 루틴의 시간을 바꿔주세요.',
                         ),
-                        backgroundColor: AppColors.error,
-                        action: SnackBarAction(
-                          label: '시간 변경',
-                          textColor: Colors.white,
-                          onPressed: _pickTime,
-                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, 'cancel'),
+                            child: const Text('취소',
+                                style: TextStyle(color: AppColors.textSecondary)),
+                          ),
+                          OutlinedButton(
+                            onPressed: () => Navigator.pop(context, 'changeTime'),
+                            child: const Text('시간 변경'),
+                          ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primary),
+                            onPressed: () => Navigator.pop(context, 'editConflict'),
+                            child: const Text('기존 루틴 수정',
+                                style: TextStyle(color: Colors.white)),
+                          ),
+                        ],
                       ),
                     );
+
+                    if (action == 'changeTime' && mounted) {
+                      await Future.delayed(const Duration(milliseconds: 100));
+                      if (mounted) _pickTime();
+                    } else if (action == 'editConflict' && mounted) {
+                      // 현재 생성 화면을 닫고 기존 루틴 수정 화면으로 교체
+                      context.pop();
+                      if (mounted) {
+                        context.push(
+                          RouteConstants.routineCreate,
+                          extra: conflictRoutine,
+                        );
+                      }
+                    }
                     return;
                   }
                   setState(() => _step = 1);
@@ -480,8 +541,12 @@ class _Step1 extends StatelessWidget {
   final String arrivalTimeStr;
   final VoidCallback onPickTime;
   final void Function(String) onDayToggle;
-  final VoidCallback onNext;
+  final Future<void> Function() onNext;
   final List<String> existingNames;
+  final int spareTime;
+  final void Function(int) onSpareTimeChanged;
+  final bool skipHoliday;
+  final void Function(bool) onSkipHolidayChanged;
 
   const _Step1({
     required this.formKey,
@@ -493,6 +558,10 @@ class _Step1 extends StatelessWidget {
     required this.onDayToggle,
     required this.onNext,
     required this.existingNames,
+    required this.spareTime,
+    required this.onSpareTimeChanged,
+    required this.skipHoliday,
+    required this.onSkipHolidayChanged,
   });
 
   @override
@@ -592,11 +661,134 @@ class _Step1 extends StatelessWidget {
                 ),
               ),
             ),
+            const SizedBox(height: 24),
+            // ── 여유 시간 슬라이더 ──────────────────────
+            Row(
+              children: [
+                const Text('여유 시간',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary)),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.25)),
+                  ),
+                  child: const Text('NEW',
+                      style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text('0분',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary)),
+                      Expanded(
+                        child: Slider(
+                          value: spareTime.toDouble(),
+                          min: 0,
+                          max: 60,
+                          divisions: 12,
+                          activeColor: AppColors.primary,
+                          inactiveColor: AppColors.border,
+                          onChanged: (v) =>
+                              onSpareTimeChanged(v.round()),
+                        ),
+                      ),
+                      const Text('60분',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary)),
+                      const SizedBox(width: 8),
+                      Text('$spareTime분',
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.primary)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '권장 출발 = 소요 시간 + 여유 $spareTime분 역산',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            // 예상 출발 시간 프리뷰 배너
+            _SpareTimePreviewBanner(
+              arrivalTimeStr: arrivalTimeStr,
+              spareTime: spareTime,
+            ),
+            const SizedBox(height: 16),
+            // ── 공휴일 제외 토글 ──────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('공휴일 제외',
+                            style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary)),
+                        const SizedBox(height: 2),
+                        Text(
+                          skipHoliday
+                              ? '공휴일에는 루틴 알림 및 실시간 경로 안내가 없어요'
+                              : '공휴일에도 루틴을 정상 실행해요',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Switch(
+                    value: skipHoliday,
+                    activeColor: AppColors.primary,
+                    onChanged: onSkipHolidayChanged,
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: onNext,
+                onPressed: () => onNext(),
                 child: const Text('다음'),
               ),
             ),
@@ -1703,6 +1895,91 @@ class _AddAddressSheetState extends State<_AddAddressSheet> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+// ── 여유 시간 프리뷰 배너 ──────────────────────────
+class _SpareTimePreviewBanner extends StatelessWidget {
+  final String arrivalTimeStr;
+  final int spareTime;
+
+  const _SpareTimePreviewBanner({
+    required this.arrivalTimeStr,
+    required this.spareTime,
+  });
+
+  String _calcDeparture(String arrival, int spare, {int estimatedMinutes = 0}) {
+    // 예상 소요 시간이 없을 때는 spare만 반영 (경로 미선택 상태)
+    final parts = arrival.split(':');
+    if (parts.length != 2) return '--:--';
+    final h = int.tryParse(parts[0]) ?? 0;
+    final m = int.tryParse(parts[1]) ?? 0;
+    final totalMin = h * 60 + m - spare - estimatedMinutes;
+    if (totalMin < 0) {
+      final absMin = totalMin.abs();
+      return '전날 ${(absMin ~/ 60).toString().padLeft(2, '0')}:${(absMin % 60).toString().padLeft(2, '0')}';
+    }
+    return '${(totalMin ~/ 60).toString().padLeft(2, '0')}:${(totalMin % 60).toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (spareTime == 0) return const SizedBox.shrink();
+    final depTime = _calcDeparture(arrivalTimeStr, spareTime);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome_rounded,
+                  size: 14, color: AppColors.primary),
+              const SizedBox(width: 4),
+              const Text('예상 권장 출발 시간',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Text(depTime,
+                  style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary)),
+              const SizedBox(width: 8),
+              const Text('출발  →',
+                  style: TextStyle(
+                      fontSize: 13, color: AppColors.textSecondary)),
+              const SizedBox(width: 8),
+              Text(arrivalTimeStr,
+                  style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF0D7A6B))),
+              const SizedBox(width: 4),
+              const Text('도착',
+                  style: TextStyle(
+                      fontSize: 13, color: AppColors.textSecondary)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '소요 시간 + 여유 $spareTime분 = ${spareTime}분 전 출발 (경로 소요 제외 기준)',
+            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+        ],
       ),
     );
   }

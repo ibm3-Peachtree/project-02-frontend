@@ -233,12 +233,39 @@ class _HeaderCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            routine.routineName,
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.w800),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  routine.routineName,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ),
+              // excludeHoliday(skipHoliday)=true: 공휴일 제외 (밝은 파란 계열 강조)
+              if (routine.skipHoliday) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFBBDEFB),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    '공휴일 제외',
+                    style: TextStyle(
+                        color: Color(0xFF1565C0),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ],
           ),
           const SizedBox(height: 6),
           Text(
@@ -251,20 +278,23 @@ class _HeaderCard extends StatelessWidget {
           const SizedBox(height: 10),
           Wrap(
             spacing: 6,
-            children: routine.dayLabelsKo.map((label) {
-              return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.25),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(label,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500)),
-              );
-            }).toList(),
+            runSpacing: 6,
+            children: [
+              ...routine.dayLabelsKo.map((label) {
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(label,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500)),
+                );
+              }),
+            ],
           ),
           const SizedBox(height: 10),
           Row(
@@ -275,12 +305,24 @@ class _HeaderCard extends StatelessWidget {
                 '목표 도착 ${routine.targetArrivalTime}',
                 style: const TextStyle(color: Colors.white70, fontSize: 13),
               ),
-              const SizedBox(width: 12),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
               const Icon(Icons.schedule, size: 14, color: Colors.white70),
               const SizedBox(width: 4),
               Text(
                 '권장 출발 ${routine.recommendedDepartureTime}',
-                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(width: 8),
+              _DetailBadge(
+                icon: Icons.timer_outlined,
+                label: '여유 ${routine.spareTime}분',
               ),
             ],
           ),
@@ -715,6 +757,39 @@ class _StatsRow extends StatelessWidget {
           ),
         );
       }).toList(),
+    );
+  }
+}
+// ── 헤더카드 내 반투명 배지 ─────────────────────────────
+class _DetailBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _DetailBadge({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.20),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: Colors.white),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.white,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

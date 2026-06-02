@@ -13,10 +13,11 @@ class SplashScreen extends ConsumerStatefulWidget {
 }
 
 class _SplashScreenState extends ConsumerState<SplashScreen> {
+  bool _dialogShown = false; // 다이얼로그 중복 표시 방지
+
   @override
   void initState() {
     super.initState();
-    // Check auth status after first frame so router can react
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(authProvider.notifier).checkAuthStatus();
     });
@@ -24,11 +25,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
   Future<void> _onGoogleSignIn() async {
     await ref.read(authProvider.notifier).signInWithGoogle();
-    // GPS 권한 요청은 auth_provider.signInWithGoogle() 내부에서 처리합니다.
-    // deniedForever인 경우 location_service.ensurePermission()이
-    // 경로 시작 시 설정 안내를 띄웁니다.
   }
-
 
   String _friendlyError(String raw) {
     if (raw.contains('503') || raw.contains('Service Unavailable')) {
@@ -46,10 +43,75 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     return '로그인에 실패했어요.\n잠시 후 다시 시도해주세요.';
   }
 
+  Future<void> _showWithdrawnAccountDialog(BuildContext context) async {
+    if (!mounted || _dialogShown) return;
+    setState(() => _dialogShown = true);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          '탈퇴된 계정입니다',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+        ),
+        content: const Text(
+          '이 계정은 탈퇴 처리된 계정입니다.\n계정을 다시 활성화하시겠습니까?',
+          style: TextStyle(fontSize: 14, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('취소', style: TextStyle(color: Color(0xFF666666))),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('활성화'),
+          ),
+        ],
+      ),
+    );
+
+    // 다이얼로그가 닫힌 후 플래그 리셋 (재시도 가능하도록)
+    if (mounted) setState(() => _dialogShown = false);
+
+    if (!mounted) return;
+
+    if (confirmed == true) {
+      await ref.read(authProvider.notifier).restoreAndLogin();
+    } else {
+      // 취소 → 로그인 화면으로
+      ref.read(authProvider.notifier).cancelWithdrawnRestore();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
     final isLoading = auth.isLoading;
+
+    // withdrawnAccount 상태 감지 → 다이얼로그 표시
+    // build 안에서 직접 감지하여 라우터 리다이렉트 타이밍 문제 해결
+    ref.listen<AuthState>(authProvider, (prev, next) {
+      if (next.status == AuthStatus.withdrawnAccount) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showWithdrawnAccountDialog(context);
+        });
+      }
+    });
+
+    // 앱 시작 시 withdrawnAccount 상태로 복원된 경우도 처리
+    if (auth.status == AuthStatus.withdrawnAccount && !_dialogShown) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showWithdrawnAccountDialog(context);
+      });
+    }
 
     return Scaffold(
       body: Container(
@@ -86,7 +148,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                 ),
               ),
               const Spacer(),
-              if (auth.status == AuthStatus.unauthenticated ||
+              // withdrawnAccount 상태일 때: 로딩 인디케이터 (다이얼로그가 뜨는 동안)
+              if (auth.status == AuthStatus.withdrawnAccount)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 60),
+                  child: CircularProgressIndicator(color: Colors.white),
+                )
+              else if (auth.status == AuthStatus.unauthenticated ||
                   auth.status == AuthStatus.unknown) ...[
                 if (auth.errorMessage != null)
                   Padding(

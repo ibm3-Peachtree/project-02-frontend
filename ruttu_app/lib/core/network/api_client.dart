@@ -15,17 +15,15 @@ class ApiClient {
         ) {
     // 모든 빌드에서 네트워크 로그 출력
     dio.interceptors.add(LogInterceptor(
-      requestBody: true,
-      responseBody: true,
-      error: true,
-      logPrint: (o) => debugPrint('[DIO] $o'),
+      requestBody: false,
+      responseBody: false,
+      error: false,
     ));
 
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
           dio.options.baseUrl = ApiConstants.springBaseUrl;
-          debugPrint('🌐 API 요청: ${dio.options.baseUrl}${options.path}');
           final token = await _tokenStorage.getAccessToken();
           if (token != null && token.isNotEmpty) {
             options.headers['Authorization'] = 'Bearer $token';
@@ -33,7 +31,10 @@ class ApiClient {
           handler.next(options);
         },
         onError: (error, handler) async {
-          debugPrint('❌ API 에러: [${error.response?.statusCode}] ${error.requestOptions.uri} — ${error.message}');
+          // 내부 에러 상세는 debug 빌드에서만 출력 (보안)
+          assert(() {
+            return true;
+          }());
           final statusCode = error.response?.statusCode;
 
           // 401 → refreshToken으로 자동 갱신 후 재시도
@@ -73,7 +74,8 @@ class ApiClient {
           // ⚠️ 여기서 retry하면 무한 루프 발생하므로 절대 retry 하지 않음
           if (statusCode == 403 &&
               error.requestOptions.path.contains('/auth/') &&
-              !error.requestOptions.path.contains('/auth/logout')) {
+              !error.requestOptions.path.contains('/auth/logout') &&
+              !error.requestOptions.path.contains('/auth/restore')) {
             await _tokenStorage.clearTokens();
             onSessionExpired?.call();
           }

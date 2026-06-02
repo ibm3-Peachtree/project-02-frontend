@@ -170,11 +170,30 @@ void _showNicknameEditSheet(
     isScrollControlled: true,
     shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-    builder: (ctx) => Padding(
+    builder: (ctx) => _NicknameEditSheet(ctrl: ctrl, ref: ref),
+  );
+}
+
+class _NicknameEditSheet extends StatefulWidget {
+  final TextEditingController ctrl;
+  final WidgetRef ref;
+  const _NicknameEditSheet({required this.ctrl, required this.ref});
+
+  @override
+  State<_NicknameEditSheet> createState() => _NicknameEditSheetState();
+}
+
+class _NicknameEditSheetState extends State<_NicknameEditSheet> {
+  String? _errorText;
+  bool _loading = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
       padding: EdgeInsets.fromLTRB(
           20, 24, 20,
-          MediaQuery.of(ctx).viewInsets.bottom +
-              MediaQuery.of(ctx).viewPadding.bottom +
+          MediaQuery.of(context).viewInsets.bottom +
+              MediaQuery.of(context).viewPadding.bottom +
               16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -184,12 +203,16 @@ void _showNicknameEditSheet(
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
           const SizedBox(height: 16),
           TextField(
-            controller: ctrl,
+            controller: widget.ctrl,
             autofocus: true,
             maxLength: 20,
-            decoration: const InputDecoration(
+            onChanged: (_) {
+              if (_errorText != null) setState(() => _errorText = null);
+            },
+            decoration: InputDecoration(
               hintText: '새 닉네임을 입력해주세요',
               counterText: '',
+              errorText: _errorText,
             ),
           ),
           const SizedBox(height: 20),
@@ -198,20 +221,42 @@ void _showNicknameEditSheet(
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary),
-              onPressed: () async {
-                final name = ctrl.text.trim();
-                if (name.isEmpty) return;
-                Navigator.pop(ctx);
-                await ref.read(authProvider.notifier).setNickname(name);
-              },
-              child: const Text('저장하기',
-                  style: TextStyle(color: Colors.white)),
+              onPressed: _loading
+                  ? null
+                  : () async {
+                      final name = widget.ctrl.text.trim();
+                      if (name.isEmpty) return;
+                      setState(() {
+                        _loading = true;
+                        _errorText = null;
+                      });
+                      final success =
+                          await widget.ref.read(authProvider.notifier).setNickname(name);
+                      if (!mounted) return;
+                      if (success) {
+                        Navigator.pop(context);
+                      } else {
+                        final errMsg = widget.ref.read(authProvider).errorMessage;
+                        setState(() {
+                          _loading = false;
+                          _errorText = errMsg ?? '이미 존재하는 닉네임입니다.';
+                        });
+                      }
+                    },
+              child: _loading
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('저장하기',
+                      style: TextStyle(color: Colors.white)),
             ),
           ),
         ],
       ),
-    ),
-  );
+    );
+  }
 }
 
 // ── 메뉴 아이템 ──────────────────────────────────────────

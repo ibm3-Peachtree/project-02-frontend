@@ -126,6 +126,59 @@ class PathModel {
       };
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 추천 경로 목록 응답 — 돌발 사고 + 우회 경로 포함
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// GET /me/routines/active/reco 응답 래퍼
+/// 서버가 단순 배열이면 hasIncident=false, detourList=[] 로 처리
+class RecoRouteListResponse {
+  /// 돌발 사고 발생 여부
+  final bool hasIncident;
+  /// 사고 메시지 (hasIncident=true 일 때)
+  final String? incidentMessage;
+  /// 우회 경로 목록 (isDetour=true 태그됨)
+  final List<RouteModel> detourList;
+  /// 일반 추천 경로 목록
+  final List<RouteModel> recoList;
+
+  const RecoRouteListResponse({
+    this.hasIncident = false,
+    this.incidentMessage,
+    this.detourList = const [],
+    required this.recoList,
+  });
+
+  factory RecoRouteListResponse.fromJson(dynamic json) {
+    // 서버가 { hasIncident, incidentMessage, detourList, recoList } 객체로 내려올 때
+    if (json is Map<String, dynamic>) {
+      final detour = (json['detourList'] as List<dynamic>? ?? [])
+          .map((e) => RouteModel.fromJson(e as Map<String, dynamic>, isDetour: true))
+          .toList();
+      final reco = (json['recoList'] as List<dynamic>? ??
+              // fallback: 구버전 API — 루트 바로 배열로 내려올 경우
+              (json['routes'] as List<dynamic>? ?? []))
+          .map((e) => RouteModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+      return RecoRouteListResponse(
+        hasIncident:     json['hasIncident'] as bool? ?? false,
+        incidentMessage: json['incidentMessage'] as String?,
+        detourList:      detour,
+        recoList:        reco,
+      );
+    }
+    // 서버가 단순 배열로 내려올 때 (기존 API 호환)
+    if (json is List<dynamic>) {
+      return RecoRouteListResponse(
+        recoList: json
+            .map((e) => RouteModel.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+    }
+    return const RecoRouteListResponse(recoList: []);
+  }
+}
+
 /// GET /me/routines/active/route  &  /me/routes/active/reco 응답 (RouteDto)
 class RouteModel {
   final int recoId;
@@ -135,6 +188,12 @@ class RouteModel {
   final String? startName;
   final String? endName;
   final List<PathModel> path;
+  /// 우회 경로 여부 — 서버 응답의 detourList 에서 파싱될 때 true
+  final bool isDetour;
+  /// 현재 이용 중인 경로 여부 (서버 응답의 isCurrent 또는 current 필드)
+  final bool isCurrent;
+  /// 우회 경로 시간 차이 (예: "+2분") — 서버가 내려주는 경우
+  final String? timeDelta;
 
   const RouteModel({
     required this.recoId,
@@ -144,14 +203,17 @@ class RouteModel {
     this.startName,
     this.endName,
     required this.path,
+    this.isDetour = false,
+    this.isCurrent = false,
+    this.timeDelta,
   });
 
-  factory RouteModel.fromJson(Map<String, dynamic> json) {
+  factory RouteModel.fromJson(Map<String, dynamic> json, {bool isDetour = false}) {
     // searchRoutes 응답(RouteListDto): path 대신 trafficType 배열로 내려옴
     // e.g. { "recoId": 1, "totalTime": 45, "payment": 1650,
     //        "trafficType": ["walk", "bus:360", "subway:2", "walk"] }
     if (json['trafficType'] is List) {
-      return RouteModel._fromListDto(json);
+      return RouteModel._fromListDto(json, isDetour: isDetour);
     }
 
     return RouteModel(
@@ -165,11 +227,14 @@ class RouteModel {
               ?.map((e) => PathModel.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
+      isDetour:  isDetour || (json['isDetour'] as bool? ?? false),
+      isCurrent: json['isCurrent'] as bool? ?? json['current'] as bool? ?? false,
+      timeDelta: json['timeDelta'] as String?,
     );
   }
 
   /// searchRoutes 응답 — trafficType 배열로 경로 구성
-  factory RouteModel._fromListDto(Map<String, dynamic> json) {
+  factory RouteModel._fromListDto(Map<String, dynamic> json, {bool isDetour = false}) {
     final types = (json['trafficType'] as List<dynamic>).cast<String>();
     return RouteModel(
       recoId:        (json['recoId'] as num?)?.toInt() ?? 0,
@@ -177,6 +242,9 @@ class RouteModel {
       totalTime:     (json['totalTime'] as num).toInt(),
       payment:       (json['payment']   as num).toInt(),
       path:          types.map(_pathFromType).toList(),
+      isDetour:      isDetour,
+      isCurrent:     json['isCurrent'] as bool? ?? false,
+      timeDelta:     json['timeDelta'] as String?,
     );
   }
 

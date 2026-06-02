@@ -27,8 +27,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
 
   HomeNotifier(this._repository) : super(const HomeState());
 
-  Future<void> initialize() async {
-    state = state.copyWith(isLoading: true);
+  Future<void> initialize({bool silent = false}) async {
+    if (!silent) state = state.copyWith(isLoading: true);
     try {
       final routines = await _repository.getRoutines();
 
@@ -43,7 +43,14 @@ class HomeNotifier extends StateNotifier<HomeState> {
       }
 
       final today = _todayKey();
-      final hasTodayRoutine = routines.any((r) => r.isActive && r.days.contains(today));
+      // 공휴일 여부 확인 (간단 구현: 실제 공휴일 API 연동 시 교체)
+      final isHoliday = await _checkIsHoliday();
+
+      // 공휴일 + skipHoliday가 켜진 루틴은 오늘 루틴에서 제외
+      final hasTodayRoutine = routines.any((r) =>
+          r.isActive &&
+          r.days.contains(today) &&
+          !(isHoliday && r.skipHoliday));
 
       if (!hasTodayRoutine) {
         state = HomeState(
@@ -55,7 +62,10 @@ class HomeNotifier extends StateNotifier<HomeState> {
       }
 
       final todayRoutine = routines.firstWhere(
-        (r) => r.isActive && r.days.contains(today),
+        (r) =>
+            r.isActive &&
+            r.days.contains(today) &&
+            !(isHoliday && r.skipHoliday),
       );
 
       // preActive 상태에서는 루틴 상세의 route 데이터를 사용
@@ -84,8 +94,24 @@ class HomeNotifier extends StateNotifier<HomeState> {
       try {
         recommendedRoute = await _repository.getRecommendedRoute();
       } catch (e) {
-        debugPrint('[initialize] getRecommendedRoute 실패, myRoute로 fallback: $e');
-        recommendedRoute = myRoute;
+        // ✅ 버그 수정: myRoute로 fallback하면 두 탭이 같은 데이터를 갖게 됨.
+        //    실패 시 null 유지 — 추천 경로 탭은 카드 목록 선택 후 switchToRecommendedRoute()에서 채워짐.
+        debugPrint('[initialize] getRecommendedRoute 실패, null 유지: $e');
+      }
+
+      // 추천 경로 카드 목록: /me/routines/active/reco/list
+      List<RouteModel> recoRouteList = [];
+      List<RouteModel> detourRouteList = [];
+      bool hasIncident = false;
+      String? incidentMessage;
+      try {
+        final recoResp = await _repository.getRecoRouteListResponse();
+        recoRouteList = recoResp.recoList;
+        detourRouteList = recoResp.detourList;
+        hasIncident = recoResp.hasIncident;
+        incidentMessage = recoResp.incidentMessage;
+      } catch (e) {
+        debugPrint('[initialize] getRecoRouteListResponse 실패: $e');
       }
 
       // 추천 경로 초기 좌표:
@@ -105,6 +131,10 @@ class HomeNotifier extends StateNotifier<HomeState> {
         routeCoordinates: todayRoutineDetail.routeXy,
         // 추천 경로 좌표는 출발 후 _poll()에서 채워짐
         recoRouteCoordinates: recoCoords,
+        recoRouteList: recoRouteList,
+        detourRouteList: detourRouteList,
+        hasIncident: hasIncident,
+        incidentMessage: incidentMessage,
       );
     } catch (e) {
       debugPrint('❌ initialize 실패: $e');
@@ -181,12 +211,15 @@ class HomeNotifier extends StateNotifier<HomeState> {
       recommendedRoute: recoRoute,
       isLoading: false,
       currentStepIndex: stepIndex,
+      myStepIndex: isReco ? state.myStepIndex : stepIndex,
+      recoStepIndex: isReco ? stepIndex : state.recoStepIndex,
       stepRemainingMinutes: route != null ? _remainingMinutes(route, stepIndex) : 0,
       liveStatus: liveStatus,
       routeCoordinates: myCoords,
       recoRouteCoordinates: recoCoords,
       departureTime: DateTime.now(),
-      currentSectionData: section,
+      myCurrentSectionData: isReco ? state.myCurrentSectionData : section,
+      recoCurrentSectionData: isReco ? section : state.recoCurrentSectionData,
     );
 
     _startPolling();
@@ -217,36 +250,45 @@ class HomeNotifier extends StateNotifier<HomeState> {
       return; // status 없이 좌표만 갱신하면 오히려 혼란 → 이번 폴링 스킵
     }
 
-    // ── section: isUsingRecoRoute에 따라 해당 API만 호출 ──────────
-    // 두 API를 동시에 호출하면 403 에러가 항상 발생함:
-    //  - my 경로 중일 때 reco section API → 403
-    //  - reco 경로 중일 때 my section API → 403 (서버 정책)
+    // ── section: 나의 경로와 추천 경로를 항상 독립적으로 호출 ──────────
+    // 두 탭이 동시에 실행되므로 각각 독립 try-catch로 처리.
+    // 활성화되지 않은 경로는 서버가 403을 반환하므로 무시한다.
     CurrentSectionModel? mySection;
     CurrentSectionModel? recoSection;
 
-    if (!state.isUsingRecoRoute) {
-      try {
-        mySection = await _repository.getCurrentSection();
-      } catch (e) {
-        debugPrint('[LivePoll] getCurrentSection 실패 (무시됨): $e');
-      }
-    } else {
+    // 나의 경로 section — 항상 시도
+    try {
+      mySection = await _repository.getCurrentSection();
+    } catch (e) {
+      debugPrint('[LivePoll] getCurrentSection 실패 (무시됨): $e');
+    }
+
+    // 추천 경로 section — isUsingRecoRoute=true일 때만 시도
+    if (state.isUsingRecoRoute) {
       try {
         recoSection = await _repository.getRecoCurrentSection();
       } catch (e) {
         debugPrint('[LivePoll] getRecoCurrentSection 실패 (무시됨): $e');
-        // 403은 서버가 아직 reco 세션 미준비 상태 → 이번 폴링은 liveStatus만 반영
       }
     }
+
+    // 나의 경로 stepIndex (myCurrentSectionData 기준 — 독립)
+    final myStepIdx = (mySection != null && state.myRoute != null)
+        ? _resolvePathIndex(mySection, state.myRoute!.path.length)
+        : state.myStepIndex;
+
+    // 추천 경로 stepIndex (recoCurrentSectionData 기준 — 독립)
+    final recoStepIdx = (recoSection != null && state.recommendedRoute != null)
+        ? _resolvePathIndex(recoSection, state.recommendedRoute!.path.length)
+        : state.recoStepIndex;
 
     // 현재 활성 경로에 따른 section 선택
     final activeSection = state.isUsingRecoRoute ? recoSection : mySection;
 
-    // stepIndex: 활성 경로의 path 길이 기준
-    final myRoute = state.myRoute;
-    final stepIndex = (activeSection != null && myRoute != null)
-        ? _resolvePathIndex(activeSection, myRoute.path.length)
-        : state.currentStepIndex;
+    // stepIndex는 활성 경로의 path.length 기준으로 계산
+    final activeRoute = state.isUsingRecoRoute ? state.recommendedRoute : state.myRoute;
+    final stepRemainingRoute = activeRoute;
+    final stepIndex = state.isUsingRecoRoute ? recoStepIdx : myStepIdx;
 
     // ── 좌표: 각 탭 전용 좌표를 독립적으로 갱신 ─────────────────
     final newMyCoords = (mySection?.xy.isNotEmpty == true)
@@ -257,27 +299,22 @@ class HomeNotifier extends StateNotifier<HomeState> {
         ? recoSection!.xy
         : state.recoRouteCoordinates;
 
-    // ── recommendedRoute: 항상 최신 추천 반영 (myRoute 건드리지 않음) ──
-    LiveRouteModel? recoRoute;
-    try {
-      recoRoute = await _repository.getRecommendedRoute();
-    } catch (_) {
-      recoRoute = state.recommendedRoute;
-    }
-
+    // ── recommendedRoute: 폴링에서는 갱신하지 않음 ──────────────────
     state = state.copyWith(
       liveStatus: liveStatus,
-      recommendedRoute: recoRoute,
       currentStepIndex: stepIndex,
+      myStepIndex: myStepIdx,
+      recoStepIndex: recoStepIdx,
       stepRemainingMinutes:
-          myRoute != null ? _remainingMinutes(myRoute, stepIndex) : 0,
+          stepRemainingRoute != null ? _remainingMinutes(stepRemainingRoute, stepIndex) : 0,
       routeCoordinates: newMyCoords,
       recoRouteCoordinates: newRecoCoords,
-      currentSectionData: activeSection ?? state.currentSectionData,
+      myCurrentSectionData: mySection ?? state.myCurrentSectionData,
+      recoCurrentSectionData: recoSection ?? state.recoCurrentSectionData,
     );
 
     debugPrint('[LivePoll] 완료 — status:${liveStatus.status} '
-        'isReco:${state.isUsingRecoRoute} stepIdx:$stepIndex '
+        'isReco:${state.isUsingRecoRoute} myStepIdx:$myStepIdx recoStepIdx:$recoStepIdx '
         'myCoords:${newMyCoords.length}개 recoCoords:${newRecoCoords.length}개');
 
     if (liveStatus.status == '도착') {
@@ -456,21 +493,74 @@ class HomeNotifier extends StateNotifier<HomeState> {
   }
 
   /// 루틴 생성/수정 후 경로 데이터 재조회 (추천 경로 0개 문제 해결)
+  /// 루틴 생성/수정 후 데이터 재조회.
+  /// silent 모드로 initialize를 호출하여 isLoading 스피너 없이 조용히 갱신.
   Future<void> refresh() async {
-    await initialize();
+    await initialize(silent: true);
   }
 
   /// 추천 경로를 선택 (세 번째 화면 "이 경로로 변경" 버튼)
-  /// myRoute는 건드리지 않고, isUsingRecoRoute 플래그만 true로 설정.
-  /// 지도/패널은 isUsingRecoRoute를 보고 각자 recommendedRoute / recoRouteCoordinates를 표시.
-  void switchToRecommendedRoute() {
-    final reco = state.recommendedRoute;
-    if (reco == null) return;
+  /// saveRecoRoute POST → getRecommendedRoute + getRecoCurrentSection으로
+  /// 추천 경로 데이터를 fresh하게 갱신한다.
+  /// myRoute / myCurrentSectionData는 절대 건드리지 않아 나의 경로 탭이 독립 유지된다.
+  Future<void> switchToRecommendedRoute(int recoId) async {
+    state = state.copyWith(isLoading: true);
+
+    try {
+      // 1. 서버에 선택한 추천 경로 저장
+      await _repository.saveRecoRoute(recoId);
+    } catch (e) {
+      debugPrint('[switchToRecommendedRoute] saveRecoRoute 실패: $e');
+      state = state.copyWith(isLoading: false);
+      return;
+    }
+
+    // 2. 저장 직후 추천 경로 LiveRouteModel을 fresh하게 조회
+    LiveRouteModel? freshReco;
+    try {
+      freshReco = await _repository.getRecommendedRoute();
+    } catch (e) {
+      debugPrint('[switchToRecommendedRoute] getRecommendedRoute 실패: $e');
+      // 실패해도 이전 recommendedRoute가 있으면 그대로 사용
+      freshReco = state.recommendedRoute;
+    }
+
+    // 3. 추천 경로 현재 구간(section) 조회
+    CurrentSectionModel? recoSection;
+    try {
+      recoSection = await _repository.getRecoCurrentSection();
+    } catch (e) {
+      debugPrint('[switchToRecommendedRoute] getRecoCurrentSection 실패 (무시): $e');
+    }
+
+    final recoCoords = recoSection?.xy.isNotEmpty == true
+        ? recoSection!.xy
+        : state.recoRouteCoordinates;
+
+    final recoStepIdx = (recoSection != null && freshReco != null)
+        ? _resolvePathIndex(recoSection, freshReco.path.length)
+        : 0;
+
     state = state.copyWith(
-      currentStepIndex: 0,
-      stepRemainingMinutes: reco.path.isNotEmpty ? reco.path.first.sectionTime : 0,
-      isUsingRecoRoute: true, // ← 추천 경로로 전환됨을 기록 (myRoute는 유지)
+      isLoading: false,
+      isUsingRecoRoute: true,
+      // 나의 경로(myRoute, myCurrentSectionData, myStepIndex)는 일절 건드리지 않음
+      recommendedRoute: freshReco,
+      recoCurrentSectionData: recoSection,
+      recoRouteCoordinates: recoCoords,
+      recoStepIndex: recoStepIdx,
+      // currentStepIndex는 추천 경로 기준으로 설정
+      currentStepIndex: recoStepIdx,
+      stepRemainingMinutes: freshReco != null
+          ? _remainingMinutes(freshReco, recoStepIdx)
+          : 0,
+      // active 상태로 전환 (출발이 시작됨)
+      status: HomeStatus.active,
+      departureTime: state.departureTime ?? DateTime.now(),
     );
+
+    // 폴링이 아직 시작 안 된 경우(preActive → 바로 추천 경로 변경) 폴링 시작
+    _startPolling();
   }
 
   @override
@@ -482,5 +572,27 @@ class HomeNotifier extends StateNotifier<HomeState> {
   String _todayKey() {
     const keys = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
     return keys[DateTime.now().weekday - 1];
+  }
+
+  /// 오늘이 공휴일인지 확인합니다.
+  /// 현재는 공공 공휴일 API 연동 없이 주말을 제외한 법정 공휴일 목록으로 체크합니다.
+  /// 추후 공공데이터 포털 공휴일 API 연동 시 이 메서드만 교체하면 됩니다.
+  Future<bool> _checkIsHoliday() async {
+    try {
+      // 서버에서 공휴일 여부 조회 시도 (백엔드가 준비되면 아래 주석 해제)
+      // final res = await _repository.getTodayHolidayStatus();
+      // return res;
+    } catch (_) {}
+
+    // 폴백: 클라이언트 사이드 한국 법정 공휴일 체크
+    final now = DateTime.now();
+    final month = now.month;
+    final day = now.day;
+    // 고정 공휴일 목록
+    const fixedHolidays = {
+      (1, 1), (3, 1), (5, 5), (6, 6), (8, 15),
+      (10, 3), (10, 9), (12, 25),
+    };
+    return fixedHolidays.contains((month, day));
   }
 }

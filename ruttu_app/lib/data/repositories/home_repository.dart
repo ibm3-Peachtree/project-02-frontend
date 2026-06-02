@@ -12,6 +12,14 @@ abstract class HomeRepository {
   Future<LiveStatusModel> getLiveStatus();
   Future<LiveRouteModel> getMyRoute();
   Future<LiveRouteModel> getRecommendedRoute();
+  /// GET /me/routines/active/reco — 추천 경로 목록 (RouteListDto[])
+  Future<List<RouteModel>> getRecoRouteList();
+  /// GET /me/routines/active/reco — 추천 경로 목록 + 돌발 사고 정보 래퍼
+  Future<RecoRouteListResponse> getRecoRouteListResponse();
+  /// POST /me/routines/active/reco/{recoId} — 추천 경로 선택 저장
+  Future<void> saveRecoRoute(int recoId);
+  /// GET /me/routines/active/reco/{recoId} — 추천 경로 상세
+  Future<RouteModel> getRecoRouteDetail(int recoId);
   Future<CurrentSectionModel?> getCurrentSection();
   Future<CurrentSectionModel?> getRecoCurrentSection();
   Future<List<IssueModel>> getTodayIssues();
@@ -102,6 +110,32 @@ class ApiHomeRepository implements HomeRepository {
   Future<LiveRouteModel> getRecommendedRoute() async {
     final response = await _dio.get(ApiConstants.liveRecoRoute);
     return LiveRouteModel.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<List<RouteModel>> getRecoRouteList() async {
+    final response = await _dio.get(ApiConstants.liveRecoRouteList);
+    final list = response.data as List<dynamic>;
+    return list
+        .map((e) => RouteModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  @override
+  Future<RecoRouteListResponse> getRecoRouteListResponse() async {
+    final response = await _dio.get(ApiConstants.liveRecoRouteList);
+    return RecoRouteListResponse.fromJson(response.data);
+  }
+
+  @override
+  Future<void> saveRecoRoute(int recoId) async {
+    await _dio.post(ApiConstants.liveRecoSave(recoId));
+  }
+
+  @override
+  Future<RouteModel> getRecoRouteDetail(int recoId) async {
+    final response = await _dio.get('/me/routines/active/reco/$recoId');
+    return RouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
   @override

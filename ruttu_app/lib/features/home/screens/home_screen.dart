@@ -16,7 +16,9 @@ import '../providers/home_provider.dart';
 import '../providers/home_state.dart';
 import '../providers/live_location_provider.dart'
     show liveLocationProvider; // ✅ liveLocationProvider만 선택 import
+import '../../routine/providers/routine_provider.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
+import '../../../core/widgets/live_route_tabs.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -123,6 +125,13 @@ class _NoTodayRoutineView extends ConsumerWidget {
     final user = ref.watch(authProvider).user;
     final nickname = user?.nickname ?? '루뚜';
     final today = _todayKo();
+    // 공휴일 제외 루틴이 있는지 확인 (오늘 요일에 해당하는 루틴이 skipHoliday로 인해 제외됐는지)
+    final routineListAsync = ref.watch(routineListProvider);
+    final routines = routineListAsync.valueOrNull ?? [];
+    final todayKey = _todayKeyFromKo(today);
+    final isHolidaySkip = routines.any(
+      (r) => r.isActive && r.days.contains(todayKey) && r.skipHoliday,
+    );
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -189,7 +198,9 @@ class _NoTodayRoutineView extends ConsumerWidget {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      '오늘($today)은 루틴이 없어요',
+                                      isHolidaySkip
+                                          ? '오늘은 공휴일이에요 🎉'
+                                          : '오늘($today)은 루틴이 없어요',
                                       style: const TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w800,
@@ -198,7 +209,9 @@ class _NoTodayRoutineView extends ConsumerWidget {
                                     ),
                                     const SizedBox(height: 3),
                                     Text(
-                                      '$today요일 루틴을 등록하시겠어요?',
+                                      isHolidaySkip
+                                          ? '공휴일 제외 설정으로 오늘은 쉬어가세요'
+                                          : '$today요일 루틴을 등록하시겠어요?',
                                       style: const TextStyle(
                                         fontSize: 13,
                                         color: AppColors.textSecondary,
@@ -313,6 +326,11 @@ class _NoTodayRoutineView extends ConsumerWidget {
   }
 }
 
+String _todayKeyFromKo(String ko) {
+  const map = {'월': 'MON', '화': 'TUE', '수': 'WED', '목': 'THU', '금': 'FRI', '토': 'SAT', '일': 'SUN'};
+  return map[ko] ?? 'MON';
+}
+
 // ───────────────────────────────────────────────
 // 2-A-2: 루틴 없음 (아예 등록 안 함)
 // ───────────────────────────────────────────────
@@ -352,8 +370,26 @@ class _CoralHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final w = weather;
     final tmp = w?.current?.tmp;
-    final skyEmoji = w?.skyEmoji ?? '🌤';
-    final pm10 = w?.pm10Label ?? '—';
+
+    // 하늘 상태 텍스트 변환
+    String skyText = '맑음';
+    final cur = w?.current;
+    if (cur != null) {
+      if (cur.pty == '1') skyText = '비';
+      else if (cur.pty == '3') skyText = '눈';
+      else {
+        switch (cur.sky) {
+          case '1': skyText = '맑음'; break;
+          case '3': skyText = '구름많음'; break;
+          case '4': skyText = '흐림'; break;
+          default: skyText = '맑음';
+        }
+      }
+    }
+
+    // 요일 표시
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final dayLabel = weekdays[DateTime.now().weekday - 1];
 
     return Container(
       decoration: const BoxDecoration(
@@ -365,41 +401,43 @@ class _CoralHeader extends StatelessWidget {
         borderRadius: BorderRadius.zero,
       ),
       padding: const EdgeInsets.fromLTRB(20, 56, 20, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(
-            '안녕하세요, $nickname님! 👋',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
+          // 왼쪽: 인사 + 닉네임
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '안녕하세요',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$nickname님',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
+          // 오른쪽: 날씨 텍스트 (이미지 없음)
           if (w != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '$skyEmoji${tmp != null ? ' $tmp°' : ''}',
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
-                  ),
-                  const Text(
-                    ' · ',
-                    style: TextStyle(color: Colors.white70, fontSize: 14),
-                  ),
-                  Text(
-                    '미세먼지 $pm10',
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
-                  ),
-                ],
+            Text(
+              '$dayLabel · $skyText${tmp != null ? ' $tmp°' : ''}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
               ),
             ),
         ],
@@ -1751,6 +1789,8 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
     final home = ref.watch(homeProvider);
     final routine = home.activeRoutine!;
     final isImminent = home.isDepartureImminent;
+    final isOverdue = home.isDepartureOverdue;
+    final minutesOverdue = home.minutesOverdue;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -1938,6 +1978,8 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                           child: _PreActivePanel(
                             routine: routine,
                             isImminent: isImminent,
+                            isOverdue: isOverdue,
+                            minutesOverdue: minutesOverdue,
                             aiSummary: ref
                                 .watch(briefingProvider)
                                 .aiSummary
@@ -1946,59 +1988,9 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                           ),
                         ),
                         // ── 추천 경로 탭 ──────────────────────────────────
-                        // isUsingRecoRoute=true: 추천 경로로 전환 후 안내 중
-                        //   → recommendedRoute 기반 실시간 안내 패널 표시
-                        // isUsingRecoRoute=false: 아직 추천 경로 선택 전
-                        //   → 기존 추천 경로 소개 + 변경 버튼 표시
-                        Builder(builder: (context) {
-                          final isReco = ref.watch(
-                            homeProvider.select((s) => s.isUsingRecoRoute),
-                          );
-                          if (isReco) {
-                            return SingleChildScrollView(
-                              controller: scrollController,
-                              child: _ActivePanel(
-                                routine: routine,
-                                // ✅ 추천 경로 탭은 recommendedRoute 사용 (myRoute 아님)
-                                route: home.recommendedRoute,
-                                currentStepIndex: home.currentStepIndex,
-                                liveStatusText:
-                                    home.liveStatus?.status ?? '도보 중',
-                                stepRemainingMinutes:
-                                    home.stepRemainingMinutes,
-                                stopsRemaining: home.stopsRemaining,
-                                currentStationName:
-                                    home.currentStationName,
-                                isWalking: home.isWalking,
-                                sectionData: home.currentSectionData,
-                                onStop: () => ref
-                                    .read(homeProvider.notifier)
-                                    .stopRoute(),
-                              ),
-                            );
-                          }
-                          return SingleChildScrollView(
-                            controller: scrollController,
-                            child: _RecommendedPanel(
-                              route: home.recommendedRoute,
-                              hasIncident: false,
-                              onKeep: () => _tabController.animateTo(0),
-                              onSwitch: () async {
-                                // ✅ 순서: switchToRecommendedRoute → startRoute 1번만 호출
-                                // switchToRecommendedRoute()로 isUsingRecoRoute=true 설정 후
-                                // startRoute()에서 isReco=true → getMyRoute() 재호출 없이
-                                // 추천 경로로 출발
-                                ref
-                                    .read(homeProvider.notifier)
-                                    .switchToRecommendedRoute();
-                                await ref
-                                    .read(homeProvider.notifier)
-                                    .startRoute();
-                                // 탭 이동 없음 — 추천 경로 탭에서 그대로 실시간 안내
-                              },
-                            ),
-                          );
-                        }),
+                        // RecoRouteTabContent: recoRouteProvider 기반으로
+                        // 카드 목록 선택 → 실시간 구간 안내(이미지2)까지 모두 처리
+                        RecoRouteTabContent(scrollController: scrollController),
                       ],
                     ),
                   ),
@@ -2384,68 +2376,22 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                           child: _ActivePanel(
                             routine: routine,
                             route: route,
-                            currentStepIndex: home.currentStepIndex,
+                            currentStepIndex: home.myStepIndex,
                             liveStatusText:
                                 home.liveStatus?.status ?? '도보 중',
-                            stepRemainingMinutes:
-                                home.stepRemainingMinutes,
-                            stopsRemaining: home.stopsRemaining,
-                            currentStationName: home.currentStationName,
-                            isWalking: home.isWalking,
-                            sectionData: home.currentSectionData,
+                            stepRemainingMinutes: home.myStepRemainingMinutes,
+                            stopsRemaining: home.myStopsRemaining,
+                            currentStationName: home.myCurrentStationName,
+                            isWalking: home.myIsWalking,
+                            sectionData: home.myCurrentSectionData,
                             onStop: () =>
                                 widget.onStopTap(home.activeRoutine),
                           ),
                         ),
                         // ── 추천 경로 탭 ──────────────────────────────────
-                        // isUsingRecoRoute=true: 추천 경로로 전환 후 안내 중
-                        //   → recommendedRoute 기반 실시간 안내 패널 표시
-                        // isUsingRecoRoute=false: 아직 추천 경로 선택 전
-                        //   → 기존 추천 경로 소개 + 변경 버튼 표시
-                        Builder(builder: (context) {
-                          final isReco = ref.watch(
-                            homeProvider.select((s) => s.isUsingRecoRoute),
-                          );
-                          if (isReco) {
-                            return SingleChildScrollView(
-                              controller: scrollController,
-                              child: _ActivePanel(
-                                routine: routine,
-                                // ✅ 추천 경로 탭은 recommendedRoute 사용 (myRoute 아님)
-                                route: home.recommendedRoute,
-                                currentStepIndex: home.currentStepIndex,
-                                liveStatusText:
-                                    home.liveStatus?.status ?? '도보 중',
-                                stepRemainingMinutes:
-                                    home.stepRemainingMinutes,
-                                stopsRemaining: home.stopsRemaining,
-                                currentStationName:
-                                    home.currentStationName,
-                                isWalking: home.isWalking,
-                                sectionData: home.currentSectionData,
-                                onStop: () =>
-                                    widget.onStopTap(home.activeRoutine),
-                              ),
-                            );
-                          }
-                          return SingleChildScrollView(
-                            controller: scrollController,
-                            child: _RecommendedPanel(
-                              route: home.recommendedRoute,
-                              hasIncident: false,
-                              onKeep: () => _tabController.animateTo(0),
-                              onSwitch: () async {
-                                // ✅ switchToRecommendedRoute만 호출 (startRoute 중복 호출 제거)
-                                // startRoute는 이미 출발 시 호출됐으므로 재호출 불필요.
-                                // 재호출하면 getMyRoute()가 state.myRoute를 덮어쓰는 버그 발생.
-                                ref
-                                    .read(homeProvider.notifier)
-                                    .switchToRecommendedRoute();
-                                // 탭 이동 없음 — 추천 경로 탭에서 그대로 실시간 안내
-                              },
-                            ),
-                          );
-                        }),
+                        // RecoRouteTabContent: recoRouteProvider 기반으로
+                        // 카드 목록 선택 → 실시간 구간 안내(이미지2)까지 모두 처리
+                        RecoRouteTabContent(scrollController: scrollController),
                       ],
                     ),
                   ),
@@ -2522,12 +2468,16 @@ class _PanelTabBar extends StatelessWidget {
 class _PreActivePanel extends StatefulWidget {
   final RoutineModel routine;
   final bool isImminent;
+  final bool isOverdue;
+  final int minutesOverdue;
   final String? aiSummary;
   final LiveRouteModel? myRoute;
 
   const _PreActivePanel({
     required this.routine,
     required this.isImminent,
+    this.isOverdue = false,
+    this.minutesOverdue = 0,
     this.aiSummary,
     this.myRoute,
   });
@@ -2591,40 +2541,119 @@ class _PreActivePanelState extends State<_PreActivePanel> {
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: widget.isImminent
-                    ? [const Color(0xFFFFF3E0), const Color(0xFFFFE0B2)]
-                    : [Colors.white, const Color(0xFFFFF5F2)],
+                colors: widget.isOverdue
+                    ? [const Color(0xFFFFF0EE), const Color(0xFFFFDDD9)]
+                    : widget.isImminent
+                        ? [const Color(0xFFFFF3E0), const Color(0xFFFFE0B2)]
+                        : [Colors.white, const Color(0xFFFFF5F2)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: widget.isImminent
-                    ? AppColors.warning.withValues(alpha: 0.5)
-                    : AppColors.primary.withValues(alpha: 0.2),
+                color: widget.isOverdue
+                    ? AppColors.error.withValues(alpha: 0.5)
+                    : widget.isImminent
+                        ? AppColors.warning.withValues(alpha: 0.5)
+                        : AppColors.primary.withValues(alpha: 0.2),
               ),
             ),
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 상단 레이블
+                // 상단 레이블 행 — 좌: 출발 예정 텍스트 / 우: 늦어도~칩
                 Row(
                   children: [
                     Icon(
-                      widget.isImminent ? Icons.directions_run : Icons.access_time_rounded,
+                      widget.isOverdue
+                          ? Icons.directions_run
+                          : widget.isImminent
+                              ? Icons.directions_run
+                              : Icons.access_time_rounded,
                       size: 13,
-                      color: widget.isImminent ? AppColors.warning : AppColors.textSecondary,
+                      color: widget.isOverdue
+                          ? AppColors.error
+                          : widget.isImminent
+                              ? AppColors.warning
+                              : AppColors.textSecondary,
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      widget.isImminent ? '곧 출발하세요!' : '출발 예정',
+                      widget.isOverdue
+                          ? '지금 출발하세요!'
+                          : widget.isImminent
+                              ? '곧 출발하세요!'
+                              : '출발 예정',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: widget.isImminent ? AppColors.warning : AppColors.textSecondary,
+                        color: widget.isOverdue
+                            ? AppColors.error
+                            : widget.isImminent
+                                ? AppColors.warning
+                                : AppColors.textSecondary,
                       ),
                     ),
+                    if (widget.isOverdue) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        '권장 출발 시간이 ${widget.minutesOverdue}분 지났어요',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.error.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ],
+                    const Spacer(),
+                    // ── 늦어도 ~ 칩 (우측 상단, 도착시간 - 소요시간)
+                    if (!widget.isOverdue && widget.routine.spareTime >= 0)
+                      Builder(builder: (context) {
+                        final parts = widget.routine.targetArrivalTime.split(':');
+                        if (parts.length < 2) return const SizedBox.shrink();
+                        final totalMinutes =
+                            (int.tryParse(parts[0]) ?? 0) * 60 +
+                            (int.tryParse(parts[1]) ?? 0) -
+                            widget.routine.estimatedDuration;
+                        final deadlineH = (totalMinutes ~/ 60).clamp(0, 23);
+                        final deadlineM = (totalMinutes % 60).clamp(0, 59);
+                        final deadline =
+                            '${deadlineH.toString().padLeft(2, '0')}:${deadlineM.toString().padLeft(2, '0')}';
+                        final chipBg = widget.isImminent
+                            ? const Color(0xFFFFF3CD)
+                            : const Color(0xFFFFFDE7);
+                        final chipBorder = widget.isImminent
+                            ? const Color(0xFFFFCA28)
+                            : const Color(0xFFFFEE88);
+                        final chipColor = widget.isImminent
+                            ? const Color(0xFF7A5100)
+                            : const Color(0xFF8A6500);
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: chipBg,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: chipBorder, width: 0.8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.alarm_rounded,
+                                  size: 11, color: chipColor),
+                              const SizedBox(width: 3),
+                              Text(
+                                '늦어도 $deadline에는 출발',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: chipColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
                   ],
                 ),
                 const SizedBox(height: 10),
@@ -2646,10 +2675,12 @@ class _PreActivePanelState extends State<_PreActivePanel> {
                           ),
                           Text(
                             widget.routine.recommendedDepartureTime,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 30,
                               fontWeight: FontWeight.w800,
-                              color: AppColors.primary,
+                              color: widget.isOverdue
+                                  ? AppColors.error
+                                  : AppColors.primary,
                               height: 1.1,
                             ),
                           ),
@@ -2851,7 +2882,10 @@ class _ActivePanel extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '다음 승차 위치: $currentStationName',
+                    [
+                      if (currentStationName != null) '다음 승차 위치: $currentStationName',
+                      if (_nextSectionLabel() != null) '→ ${_nextSectionLabel()}',
+                    ].join('  '),
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.green.withValues(alpha: 0.8),
@@ -2882,9 +2916,11 @@ class _ActivePanel extends StatelessWidget {
             children: [
               const Icon(Icons.place_outlined, size: 16, color: AppColors.subway),
               const SizedBox(width: 8),
-              Text(
-                '현재 위치: $currentStationName${stops != null ? "  ·  $stops정거장 남음" : ""}',
-                style: const TextStyle(fontSize: 12, color: AppColors.subway),
+              Expanded(
+                child: Text(
+                  '현재 위치: $currentStationName${stops != null ? "  ·  $stops정거장 남음" : ""}${_nextSectionLabel() != null ? "  →  다음: ${_nextSectionLabel()}" : ""}',
+                  style: const TextStyle(fontSize: 12, color: AppColors.subway),
+                ),
               ),
             ],
           ),
@@ -2932,11 +2968,14 @@ class _ActivePanel extends StatelessWidget {
                     color: color,
                   ),
                 ),
-                // ✅ 현재 위치 항상 표시 (정류장 이름이 있을 때)
-                if (currentStationName != null) ...[
+                // 현재 위치 + 다음 구간 표시
+                if (currentStationName != null || _nextSectionLabel() != null) ...[
                   const SizedBox(height: 2),
                   Text(
-                    '현재 위치: $currentStationName',
+                    [
+                      if (currentStationName != null) '현재 위치: $currentStationName',
+                      if (_nextSectionLabel() != null) '다음: ${_nextSectionLabel()}',
+                    ].join('  →  '),
                     style: TextStyle(
                       fontSize: 12,
                       color: color.withValues(alpha: 0.8),
@@ -2949,6 +2988,19 @@ class _ActivePanel extends StatelessWidget {
         ],
       ),
     );
+  }
+
+
+  /// 다음 구간 레이블 (없으면 null)
+  String? _nextSectionLabel() {
+    final paths = route?.path ?? [];
+    final nextIdx = currentStepIndex + 1;
+    if (nextIdx >= paths.length) return null;
+    final next = paths[nextIdx];
+    if (next.isWalking) return '도보';
+    if (next.isBus) return '버스 ${next.busNumbersLabel}';
+    if (next.isSubway) return '지하철 ${next.subwayLineName}';
+    return null;
   }
 
   @override
@@ -3129,6 +3181,708 @@ class _ActivePanel extends StatelessWidget {
 }
 
 // ───────────────────────────────────────────────
+// ───────────────────────────────────────────────
+// 추천 경로 탭 — 카드 목록 패널
+// ───────────────────────────────────────────────
+class _RecoRouteListPanel extends ConsumerStatefulWidget {
+  final List<RouteModel> recoList;
+  final List<RouteModel> detourList;
+  final bool hasIncident;
+  final String? incidentMessage;
+  final VoidCallback onKeep;
+  final void Function(int recoId) onSwitch;
+
+  const _RecoRouteListPanel({
+    required this.recoList,
+    required this.detourList,
+    required this.hasIncident,
+    this.incidentMessage,
+    required this.onKeep,
+    required this.onSwitch,
+  });
+
+  @override
+  ConsumerState<_RecoRouteListPanel> createState() => _RecoRouteListPanelState();
+}
+
+class _RecoRouteListPanelState extends ConsumerState<_RecoRouteListPanel> {
+  int? _selectedRecoId;
+
+  Future<void> _showDetail(RouteModel summary) async {
+    RouteModel detail = summary;
+    try {
+      detail = await ref
+          .read(homeRepositoryProvider)
+          .getRecoRouteDetail(summary.recoId);
+    } catch (_) {}
+    if (!mounted) return;
+    final selected = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.75,
+        maxChildSize: 0.95,
+        builder: (_, controller) => Container(
+          color: Colors.white,
+          child: _RecoRouteDetailSheet(
+            route: detail,
+            scrollController: controller,
+          ),
+        ),
+      ),
+    );
+    if (selected == true && mounted) {
+      setState(() => _selectedRecoId = summary.recoId);
+      widget.onSwitch(summary.recoId);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final allEmpty = widget.recoList.isEmpty && widget.detourList.isEmpty;
+    final isSwitching = ref.watch(homeProvider.select((s) => s.isLoading));
+
+    return Stack(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── 돌발 사고 배너 ──────────────────────────────
+          if (widget.hasIncident) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.amber,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.warning),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.warning_amber_rounded,
+                      color: AppColors.warning, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      widget.incidentMessage ?? '돌발 사고 발생 — 현재 경로 영향',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.warning,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // ── 로딩/빈 상태 ────────────────────────────────
+          if (allEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Row(
+                children: const [
+                  Icon(Icons.schedule_rounded, size: 16, color: AppColors.border),
+                  SizedBox(width: 6),
+                  Text('추천 경로를 분석 중이에요',
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                ],
+              ),
+            ),
+
+          // ── 우회 경로 목록 ──────────────────────────────
+          if (widget.detourList.isNotEmpty) ...[
+            _RouteGroupLabel(label: '우회 경로'),
+            const SizedBox(height: 8),
+            ...widget.detourList.map((route) => _RecoRouteCard(
+              route: route,
+              isSelected: _selectedRecoId == route.recoId,
+              onTap: () => setState(() => _selectedRecoId = route.recoId),
+              onDetail: () => _showDetail(route),
+            )),
+            const SizedBox(height: 16),
+          ],
+
+          // ── 추천 경로 목록 ──────────────────────────────
+          if (widget.recoList.isNotEmpty) ...[
+            _RouteGroupLabel(label: '추천 경로'),
+            const SizedBox(height: 8),
+            ...widget.recoList.map((route) => _RecoRouteCard(
+              route: route,
+              isSelected: _selectedRecoId == route.recoId,
+              onTap: () => setState(() => _selectedRecoId = route.recoId),
+              onDetail: () => _showDetail(route),
+            )),
+            const SizedBox(height: 20),
+          ],
+
+          // ── 버튼 영역 ───────────────────────────────────
+          if (!allEmpty)
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: widget.onKeep,
+                    child: const Text('현재 경로 유지'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: (_selectedRecoId != null && !isSwitching)
+                        ? () => widget.onSwitch(_selectedRecoId!)
+                        : null,
+                    child: isSwitching
+                        ? const SizedBox(
+                            width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Text('이 경로로 변경'),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+        ),
+        // 경로 전환 중 — 전체 오버레이 로딩
+        if (isSwitching)
+          Positioned.fill(
+            child: Container(
+              color: Colors.white.withValues(alpha: 0.7),
+              child: const Center(child: CircularProgressIndicator()),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _RouteGroupLabel extends StatelessWidget {
+  final String label;
+  const _RouteGroupLabel({required this.label});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Container(
+        width: 6,
+        height: 6,
+        decoration: const BoxDecoration(
+          color: AppColors.primary,
+          shape: BoxShape.circle,
+        ),
+      ),
+      const SizedBox(width: 6),
+      Text(
+        label,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textPrimary,
+        ),
+      ),
+    ],
+  );
+}
+
+class _RecoRouteCard extends StatelessWidget {
+  final RouteModel route;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final VoidCallback onDetail;
+
+  const _RecoRouteCard({
+    required this.route,
+    required this.isSelected,
+    required this.onTap,
+    required this.onDetail,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? AppColors.primary : AppColors.border,
+            width: isSelected ? 2 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── 교통수단 칩 + 상세보기 ────────────────────
+            Row(
+              children: [
+                Expanded(child: _RouteTransitRow(paths: route.path)),
+                TextButton(
+                  onPressed: onDetail,
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.secondary,
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  child: const Text('상세보기',
+                      style: TextStyle(fontSize: 13)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            // ── 소요시간 + 요금 ───────────────────────────
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${route.totalTime}분',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: route.isDetour ? AppColors.secondary : AppColors.primary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${_formatPayment(route.payment)}원',
+                  style: const TextStyle(
+                      fontSize: 14, color: AppColors.textSecondary),
+                ),
+                if (route.isCurrent) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.secondary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text('이용 중',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.secondary)),
+                  ),
+                ],
+                if (route.timeDelta != null) ...[
+                  const SizedBox(width: 6),
+                  Text(route.timeDelta!,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.secondary,
+                          fontWeight: FontWeight.w500)),
+                ],
+              ],
+            ),
+            const SizedBox(height: 10),
+            // ── 선택 체크박스 ─────────────────────────────
+            Row(
+              children: [
+                Container(
+                  width: 20,
+                  height: 20,
+                  margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isSelected ? AppColors.primary : AppColors.border,
+                      width: 2,
+                    ),
+                    color: isSelected ? AppColors.primary : Colors.transparent,
+                  ),
+                  child: isSelected
+                      ? const Icon(Icons.check, size: 12, color: Colors.white)
+                      : null,
+                ),
+                const Text('이 경로 선택',
+                    style: TextStyle(
+                        fontSize: 13, color: AppColors.textSecondary)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ───────────────────────────────────────────────
+// 추천 경로 상세 바텀시트
+// ───────────────────────────────────────────────
+class _RecoRouteDetailSheet extends StatelessWidget {
+  final RouteModel route;
+  final ScrollController scrollController;
+
+  const _RecoRouteDetailSheet({
+    required this.route,
+    required this.scrollController,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // 드래그 핸들
+        Container(
+          width: 40, height: 4,
+          margin: const EdgeInsets.only(top: 12, bottom: 16),
+          decoration: BoxDecoration(
+              color: AppColors.border,
+              borderRadius: BorderRadius.circular(2)),
+        ),
+        // 헤더
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          child: Row(
+            children: [
+              const Text('경로 상세',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              Text('${route.totalTime}분',
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primary)),
+              const Text('  ·  ',
+                  style: TextStyle(color: AppColors.textSecondary)),
+              Text('${_formatPayment(route.payment)}원',
+                  style: const TextStyle(
+                      fontSize: 14, color: AppColors.textSecondary)),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                onPressed: () => Navigator.pop(context),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Divider(height: 1, thickness: 1, color: AppColors.border),
+        // 단계별 리스트
+        Expanded(
+          child: ListView(
+            controller: scrollController,
+            padding: EdgeInsets.fromLTRB(
+                16, 20, 16, 20 + MediaQuery.of(context).padding.bottom),
+            children: [
+              ...route.path.asMap().entries.map((e) => _DetailPathItem(
+                    path: e.value,
+                    isLast: e.key == route.path.length - 1,
+                  )),
+            ],
+          ),
+        ),
+        // 하단 요약 바
+        const Divider(height: 1, thickness: 1, color: AppColors.border),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _SummaryItem('총 소요', '${route.totalTime}분'),
+              _SummaryItem('요금', '${_formatPayment(route.payment)}원'),
+              _SummaryItem('거리',
+                  '${(route.totalDistance / 1000).toStringAsFixed(1)}km'),
+            ],
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('이 경로 선택하기'),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ───────────────────────────────────────────────
+// 경로 상세 — 단계별 아이템 (펼침/접힘)
+// ───────────────────────────────────────────────
+class _DetailPathItem extends StatefulWidget {
+  final PathModel path;
+  final bool isLast;
+  const _DetailPathItem({required this.path, required this.isLast});
+
+  @override
+  State<_DetailPathItem> createState() => _DetailPathItemState();
+}
+
+class _DetailPathItemState extends State<_DetailPathItem> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = widget.path;
+    final isLast = widget.isLast;
+
+    final Color color = path.isWalking
+        ? AppColors.textSecondary
+        : path.isSubway
+            ? AppColors.subway
+            : AppColors.bus;
+    final Color chipBg = path.isWalking
+        ? AppColors.walkBg
+        : path.isSubway
+            ? AppColors.subwayBg
+            : AppColors.busBg;
+
+    final icon = path.isWalking
+        ? Icons.directions_walk
+        : path.isSubway
+            ? Icons.subway_outlined
+            : Icons.directions_bus_outlined;
+
+    final String title = path.isWalking
+        ? '도보'
+        : path.start != null && path.start!.isNotEmpty
+            ? '${path.start} 승차'
+            : path.isSubway ? '지하철 승차' : '버스 승차';
+
+    final bool hasStations = path.stationName.isNotEmpty;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Column(
+          children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: color.withValues(alpha: 0.15)),
+              child: Icon(icon, size: 18, color: color),
+            ),
+            if (!isLast)
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 2,
+                height: hasStations && _expanded
+                    ? 44.0 + path.stationName.length * 28.0
+                    : 40,
+                color: AppColors.border,
+                margin: const EdgeInsets.symmetric(vertical: 4),
+              ),
+          ],
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(bottom: isLast ? 0 : 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  onTap: hasStations
+                      ? () => setState(() => _expanded = !_expanded)
+                      : null,
+                  behavior: HitTestBehavior.opaque,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(title,
+                            style: const TextStyle(
+                                fontSize: 14, fontWeight: FontWeight.w600)),
+                      ),
+                      if (hasStations)
+                        Icon(
+                          _expanded
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
+                          size: 18,
+                          color: AppColors.textSecondary,
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                if (path.isSubway && path.no.isNotEmpty) ...[
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.chipRouteDetailBg,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(path.subwayLineName,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.chipRouteDetail)),
+                      ),
+                      if (path.way != null && path.way!.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: chipBg,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text('${path.way} 방향',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: color)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                if (path.isBus && path.busNumbers.isNotEmpty) ...[
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: path.busNumbers.map((n) => Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.chipRouteDetailBg,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text('${n}번',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.chipRouteDetail)),
+                    )).toList(),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.subwayBg,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text('${path.sectionTime}분',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.subway)),
+                    ),
+                    if (hasStations)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.busBg,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(path.stationCountLabel,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.bus)),
+                      ),
+                  ],
+                ),
+                if (hasStations && _expanded) ...[
+                  const SizedBox(height: 8),
+                  ...path.stationName.asMap().entries.map((e) {
+                    final isFirst = e.key == 0;
+                    final isLastStation = e.key == path.stationName.length - 1;
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 8, height: 8,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: (isFirst || isLastStation)
+                                      ? color
+                                      : color.withValues(alpha: 0.3),
+                                  border: Border.all(color: color, width: 1.5),
+                                ),
+                              ),
+                              if (!isLastStation)
+                                Container(
+                                  width: 2, height: 20,
+                                  color: color.withValues(alpha: 0.25),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Text(e.value,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: (isFirst || isLastStation)
+                                      ? color
+                                      : AppColors.textSecondary,
+                                  fontWeight: (isFirst || isLastStation)
+                                      ? FontWeight.w600
+                                      : FontWeight.normal)),
+                        ),
+                      ],
+                    );
+                  }),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SummaryItem extends StatelessWidget {
+  final String label;
+  final String value;
+  const _SummaryItem(this.label, this.value);
+
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary)),
+          const SizedBox(height: 2),
+          Text(value,
+              style: const TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w700)),
+        ],
+      );
+}
+
 // 추천 경로 패널
 // ───────────────────────────────────────────────
 class _RecommendedPanel extends StatelessWidget {

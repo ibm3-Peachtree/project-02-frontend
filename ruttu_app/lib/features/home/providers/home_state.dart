@@ -13,6 +13,12 @@ class HomeState {
   final WeatherAirQualityModel? weather;
   final List<IssueModel> issues;
   final LiveStatusModel? liveStatus;
+
+  /// 추천 경로 탭 — 카드 목록
+  final List<RouteModel> recoRouteList;
+  final List<RouteModel> detourRouteList;
+  final bool hasIncident;
+  final String? incidentMessage;
   final int currentStepIndex;
   final int stepRemainingMinutes;
   /// getCurrentSection()에서 내려온 xy 좌표 목록 → 지도에 경로 폴리라인으로 그림
@@ -21,8 +27,16 @@ class HomeState {
   /// 경로 시작(출발) 시각 — completeRoutine 호출 시 departureTime으로 사용
   final DateTime? departureTime;
 
-  /// 폴링에서 받은 raw section 데이터 — 정거장 위치 계산에 사용
-  final CurrentSectionModel? currentSectionData;
+  /// 나의 경로 전용 section 데이터 — 나의 경로 탭 패널에 전달
+  final CurrentSectionModel? myCurrentSectionData;
+
+  /// 추천 경로 전용 section 데이터 — 추천 경로 탭 패널에 전달
+  final CurrentSectionModel? recoCurrentSectionData;
+
+  /// @deprecated — 하위 호환용. 실제로는 myCurrentSectionData / recoCurrentSectionData를 사용.
+  /// isUsingRecoRoute에 따라 둘 중 하나를 반환한다.
+  CurrentSectionModel? get currentSectionData =>
+      isUsingRecoRoute ? recoCurrentSectionData : myCurrentSectionData;
 
   /// true: 추천 경로로 변경해서 진행 중 → complete/reco 호출
   /// false(기본): 나의 경로로 진행 중 → complete/my 호출
@@ -31,6 +45,13 @@ class HomeState {
   /// 추천 경로의 좌표 목록 (나의 경로 routeCoordinates와 독립적으로 유지)
   /// isUsingRecoRoute=true일 때 지도에 표시
   final List<RouteXYModel> recoRouteCoordinates;
+
+  /// 나의 경로 탭 전용 stepIndex — myCurrentSectionData 기준으로 독립 관리
+  /// isUsingRecoRoute=true로 전환 후에도 나의 경로 탭은 이 값을 사용
+  final int myStepIndex;
+
+  /// 추천 경로 탭 전용 stepIndex — recoCurrentSectionData 기준으로 독립 관리
+  final int recoStepIndex;
 
   const HomeState({
     this.status = HomeStatus.noRoutine,
@@ -41,13 +62,20 @@ class HomeState {
     this.weather,
     this.issues = const [],
     this.liveStatus,
+    this.recoRouteList = const [],
+    this.detourRouteList = const [],
+    this.hasIncident = false,
+    this.incidentMessage,
     this.currentStepIndex = 0,
     this.stepRemainingMinutes = 0,
     this.routeCoordinates = const [],
     this.departureTime,
-    this.currentSectionData,
+    this.myCurrentSectionData,
+    this.recoCurrentSectionData,
     this.isUsingRecoRoute = false,
     this.recoRouteCoordinates = const [],
+    this.myStepIndex = 0,
+    this.recoStepIndex = 0,
   });
 
   bool get isDepartureImminent {
@@ -60,6 +88,31 @@ class HomeState {
         int.parse(parts[0]), int.parse(parts[1]));
     final diff = dep.difference(now).inMinutes;
     return diff >= 0 && diff <= 10;
+  }
+
+  /// true: 권장 출발 시간이 이미 지났음 (diff < 0)
+  bool get isDepartureOverdue {
+    if (activeRoutine == null) return false;
+    final depTime = activeRoutine!.recommendedDepartureTime;
+    final parts = depTime.split(':');
+    if (parts.length != 2) return false;
+    final now = DateTime.now();
+    final dep = DateTime(now.year, now.month, now.day,
+        int.parse(parts[0]), int.parse(parts[1]));
+    return dep.difference(now).inMinutes < 0;
+  }
+
+  /// 권장 출발 시간이 몇 분 지났는지 (양수 반환, 지나지 않았으면 0)
+  int get minutesOverdue {
+    if (activeRoutine == null) return 0;
+    final depTime = activeRoutine!.recommendedDepartureTime;
+    final parts = depTime.split(':');
+    if (parts.length != 2) return 0;
+    final now = DateTime.now();
+    final dep = DateTime(now.year, now.month, now.day,
+        int.parse(parts[0]), int.parse(parts[1]));
+    final diff = now.difference(dep).inMinutes;
+    return diff > 0 ? diff : 0;
   }
 
   /// 도보/대기 중 여부
@@ -87,9 +140,9 @@ class HomeState {
   int? get stopsRemaining {
     if (isWalking) return null;
 
-    // myRoute의 현재 path 구간(bus/subway)의 stationName 목록에서
+    // 활성 경로(나의 경로 or 추천 경로)의 현재 path 구간 stationName 목록에서
     // 현재 정류장 이후 남은 정거장 수를 산출 (버스/지하철 공통)
-    final route = myRoute;
+    final route = isUsingRecoRoute ? recommendedRoute : myRoute;
     if (route == null) return null;
 
     final paths = route.path;
@@ -147,6 +200,125 @@ class HomeState {
     return sec.xy[currentIdx].stationName;
   }
 
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 탭별 독립 computed 값 — 나의 경로 탭 전용
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  bool _isWalkingForSection(CurrentSectionModel? sec) {
+    // liveStatus는 현재 활성 경로 기준 — 나의 경로 탭 전용 (isUsingRecoRoute=false 시)
+    final statusStr = liveStatus?.status;
+    if (statusStr != null && !isUsingRecoRoute) {
+      if (statusStr == '탑승중') return false;
+      if (statusStr == '도보중') return true;
+      if (statusStr == '대기중') return false;
+    }
+    if (sec == null) return true;
+    final currentIdx = sec.idx - 1;
+    final raw = sec.section;
+    if (currentIdx < 0 || currentIdx >= raw.length) return true;
+    return raw[currentIdx] == 'walk';
+  }
+
+  /// 나의 경로 탭 전용 isWalking (myCurrentSectionData 기준)
+  bool get myIsWalking {
+    // 나의 경로 탭은 항상 section 데이터 기준으로 판단 (liveStatus는 활성 경로 기준)
+    final sec = myCurrentSectionData;
+    if (sec == null) return true;
+    final currentIdx = sec.idx - 1;
+    final raw = sec.section;
+    if (currentIdx < 0 || currentIdx >= raw.length) return true;
+    return raw[currentIdx] == 'walk';
+  }
+
+  /// 나의 경로 탭 전용 currentStationName
+  String? get myCurrentStationName =>
+      _stationNameForSection(myCurrentSectionData, myIsWalking);
+
+  /// 나의 경로 탭 전용 stopsRemaining
+  int? get myStopsRemaining =>
+      _stopsRemainingForRoute(myRoute, myCurrentSectionData, myIsWalking, myStepIndex);
+
+  /// 나의 경로 탭 전용 stepRemainingMinutes
+  int get myStepRemainingMinutes =>
+      _remainingMinutesForRoute(myRoute, myStepIndex);
+
+  /// 추천 경로 탭 전용 isWalking (recoCurrentSectionData 기준)
+  bool get recoIsWalking {
+    // 추천 경로가 활성일 때는 liveStatus도 참조
+    final statusStr = liveStatus?.status;
+    if (statusStr != null && isUsingRecoRoute) {
+      if (statusStr == '탑승중') return false;
+      if (statusStr == '도보중') return true;
+      if (statusStr == '대기중') return false;
+    }
+    final sec = recoCurrentSectionData;
+    if (sec == null) return true;
+    final currentIdx = sec.idx - 1;
+    final raw = sec.section;
+    if (currentIdx < 0 || currentIdx >= raw.length) return true;
+    return raw[currentIdx] == 'walk';
+  }
+
+  /// 추천 경로 탭 전용 currentStationName
+  String? get recoCurrentStationName =>
+      _stationNameForSection(recoCurrentSectionData, recoIsWalking);
+
+  /// 추천 경로 탭 전용 stopsRemaining
+  int? get recoStopsRemaining =>
+      _stopsRemainingForRoute(recommendedRoute, recoCurrentSectionData, recoIsWalking, recoStepIndex);
+
+  /// 추천 경로 탭 전용 stepRemainingMinutes
+  int get recoStepRemainingMinutes =>
+      _remainingMinutesForRoute(recommendedRoute, recoStepIndex);
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 공통 내부 헬퍼
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  String? _stationNameForSection(CurrentSectionModel? sec, bool walking) {
+    if (sec == null) return null;
+    final idx = sec.idx;
+    if (sec.xy.isEmpty) return null;
+    final raw = sec.section;
+    if (walking) {
+      if (idx >= 0 && idx < raw.length && idx < sec.xy.length && raw[idx] != 'walk') {
+        final name = sec.xy[idx].stationName;
+        if (name != null && name.isNotEmpty) return name;
+      }
+      for (var i = idx + 1; i < raw.length && i < sec.xy.length; i++) {
+        if (raw[i] != 'walk') {
+          final name = sec.xy[i].stationName;
+          if (name != null && name.isNotEmpty) return name;
+        }
+      }
+      return null;
+    }
+    final currentIdx = idx - 1;
+    if (currentIdx < 0 || currentIdx >= sec.xy.length) return null;
+    return sec.xy[currentIdx].stationName;
+  }
+
+  int? _stopsRemainingForRoute(
+      LiveRouteModel? route, CurrentSectionModel? sec, bool walking, int stepIdx) {
+    if (walking || route == null) return null;
+    final paths = route.path;
+    if (stepIdx < 0 || stepIdx >= paths.length) return null;
+    final currentPath = paths[stepIdx];
+    if (currentPath.isWalking) return null;
+    final stations = currentPath.stationName;
+    if (stations.isEmpty) return currentPath.displayStationCount;
+    final currentStation = _stationNameForSection(sec, walking);
+    if (currentStation == null) return currentPath.displayStationCount;
+    final pos = stations.indexOf(currentStation);
+    if (pos < 0) return currentPath.displayStationCount;
+    return (stations.length - 1 - pos).clamp(0, 9999);
+  }
+
+  int _remainingMinutesForRoute(LiveRouteModel? route, int stepIdx) {
+    if (route == null || route.path.isEmpty || stepIdx >= route.path.length) return 0;
+    return route.path.skip(stepIdx).fold(0, (sum, p) => sum + p.sectionTime);
+  }
+
   HomeState copyWith({
     HomeStatus? status,
     bool? isLoading,
@@ -157,12 +329,19 @@ class HomeState {
     List<IssueModel>? issues,
     LiveStatusModel? liveStatus,
     int? currentStepIndex,
+    int? myStepIndex,
+    int? recoStepIndex,
     int? stepRemainingMinutes,
     List<RouteXYModel>? routeCoordinates,
     DateTime? departureTime,
-    CurrentSectionModel? currentSectionData,
+    CurrentSectionModel? myCurrentSectionData,
+    CurrentSectionModel? recoCurrentSectionData,
     bool? isUsingRecoRoute,
     List<RouteXYModel>? recoRouteCoordinates,
+    List<RouteModel>? recoRouteList,
+    List<RouteModel>? detourRouteList,
+    bool? hasIncident,
+    String? incidentMessage,
   }) =>
       HomeState(
         status: status ?? this.status,
@@ -174,11 +353,18 @@ class HomeState {
         issues: issues ?? this.issues,
         liveStatus: liveStatus ?? this.liveStatus,
         currentStepIndex: currentStepIndex ?? this.currentStepIndex,
+        myStepIndex: myStepIndex ?? this.myStepIndex,
+        recoStepIndex: recoStepIndex ?? this.recoStepIndex,
         stepRemainingMinutes: stepRemainingMinutes ?? this.stepRemainingMinutes,
         routeCoordinates: routeCoordinates ?? this.routeCoordinates,
         departureTime: departureTime ?? this.departureTime,
-        currentSectionData: currentSectionData ?? this.currentSectionData,
+        myCurrentSectionData: myCurrentSectionData ?? this.myCurrentSectionData,
+        recoCurrentSectionData: recoCurrentSectionData ?? this.recoCurrentSectionData,
         isUsingRecoRoute: isUsingRecoRoute ?? this.isUsingRecoRoute,
         recoRouteCoordinates: recoRouteCoordinates ?? this.recoRouteCoordinates,
+        recoRouteList: recoRouteList ?? this.recoRouteList,
+        detourRouteList: detourRouteList ?? this.detourRouteList,
+        hasIncident: hasIncident ?? this.hasIncident,
+        incidentMessage: incidentMessage ?? this.incidentMessage,
       );
 }

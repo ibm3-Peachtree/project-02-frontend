@@ -162,7 +162,7 @@ class _Page1 extends StatelessWidget {
       tag: '01 · 출발 알림',
       title: '딱 맞는 출발 시간을\n알려드려요',
       highlight: '출발 시간',
-      description: '루틴을 등록하면 목적지 도착 시간에 맞춰\n최적의 출발 시각을 자동으로 계산해드려요.',
+      description: '목적지 도착 시간, 경로 소요 시간, 여유 시간(기본 15분)을 더해 최적의 출발 시각을 자동으로 계산해드려요. 여유 시간은 루틴 생성 시 직접 설정할 수 있어요.',
       mockup: const _DepartureAlarmMockup(),
     );
   }
@@ -263,6 +263,46 @@ class _DepartureAlarmMockup extends StatelessWidget {
                 const Icon(Icons.arrow_forward_rounded, size: 16, color: AppColors.textSecondary),
                 _TimeChip(label: '도착', time: '10:00', active: false),
               ],
+            ),
+            const SizedBox(height: 12),
+            // 여유 시간 설명 배너
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.timer_outlined, size: 13, color: AppColors.primary),
+                      const SizedBox(width: 4),
+                      const Text('권장 출발 시간이란?',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.primary)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text('소요시간 + 여유 시간을 역산해\n가장 안전한 출발 시각을 알려드려요',
+                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary, height: 1.5)),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _OnbTimeCol(label: '출발', time: '08:30', sub: '+15분 여유', color: AppColors.primary),
+                      const Text('→', style: TextStyle(color: AppColors.textSecondary)),
+                      _OnbTimeCol(label: '이동', time: '35분', color: AppColors.textSecondary),
+                      const Text('→', style: TextStyle(color: AppColors.textSecondary)),
+                      _OnbTimeCol(label: '도착 목표', time: '09:20', color: const Color(0xFF0D7A6B)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text('루틴 생성 시 여유 시간을 직접 설정할 수 있어요 (기본 15분)',
+                      style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+                ],
+              ),
             ),
           ],
         ),
@@ -577,6 +617,36 @@ class _HighlightText extends StatelessWidget {
         color: AppColors.textPrimary,
         height: 1.4,
       ),
+    );
+  }
+}
+
+class _OnbTimeCol extends StatelessWidget {
+  final String label;
+  final String time;
+  final String? sub;
+  final Color color;
+  const _OnbTimeCol({required this.label, required this.time, required this.color, this.sub});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(label, style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+        const SizedBox(height: 2),
+        Text(time, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: color)),
+        if (sub != null)
+          Container(
+            margin: const EdgeInsets.only(top: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: AppColors.primary.withOpacity(0.25)),
+            ),
+            child: Text(sub!, style: const TextStyle(fontSize: 9, color: AppColors.primary, fontWeight: FontWeight.w600)),
+          ),
+      ],
     );
   }
 }

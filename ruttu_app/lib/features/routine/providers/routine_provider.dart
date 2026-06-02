@@ -20,7 +20,10 @@ class RoutineListNotifier
     extends StateNotifier<AsyncValue<List<RoutineModel>>> {
   final RoutineRepository _repository;
 
-  RoutineListNotifier(this._repository) : super(const AsyncLoading());
+  RoutineListNotifier(this._repository) : super(const AsyncData([])) {
+    // 생성 즉시 서버에서 목록 로드 (invalidate 후 재생성 시에도 자동 조회)
+    load();
+  }
 
   Future<void> load() async {
     state = const AsyncLoading();
@@ -40,13 +43,21 @@ class RoutineListNotifier
 
   Future<int> createRoutine(CreateRoutineRequest request) async {
     final id = await _repository.createRoutine(request);
-    await load();
+    // 로딩 스피너 없이 최신 목록으로 갱신 (AsyncLoading 상태 진입 방지)
+    try {
+      final fresh = await _repository.getRoutines();
+      state = AsyncData(fresh);
+    } catch (_) {}
     return id;
   }
 
   Future<void> updateRoutine(int routineId, CreateRoutineRequest request) async {
     await _repository.updateRoutine(routineId, request);
-    await load();
+    // 로딩 스피너 없이 최신 목록으로 갱신
+    try {
+      final fresh = await _repository.getRoutines();
+      state = AsyncData(fresh);
+    } catch (_) {}
   }
 }
 
