@@ -7,6 +7,7 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
 import '../../../core/theme/app_colors.dart';
 import '../../../data/repositories/routine_repository.dart';
+import '../../../data/repositories/notification_repository.dart';
 import '../../../core/network/api_client.dart';
 import '../../../features/auth/providers/network_provider.dart';
 
@@ -71,8 +72,37 @@ class NotificationSettings {
   }
 }
 
+// ──────────────────────────────────────────────────────────────
+// Notifier — API 조회/저장을 담당
+// ──────────────────────────────────────────────────────────────
+class NotificationSettingsNotifier
+    extends AsyncNotifier<NotificationSettings> {
+  @override
+  Future<NotificationSettings> build() async {
+    final client = ref.read(apiClientProvider);
+    final repo = ApiNotificationRepository(client.dio);
+    return repo.getSettings();
+  }
+
+  Future<void> updateAndSave(NotificationSettings updated) async {
+    // 낙관적 업데이트: UI를 즉시 반영
+    state = AsyncData(updated);
+
+    try {
+      final client = ref.read(apiClientProvider);
+      final repo = ApiNotificationRepository(client.dio);
+      await repo.updateSettings(updated);
+    } catch (e) {
+      // 저장 실패 시 로그 출력 — 필요 시 스낵바 추가 가능
+      debugPrint('[NotifSettings] 저장 실패: $e');
+    }
+  }
+}
+
 final notificationSettingsProvider =
-    StateProvider<NotificationSettings>((ref) => const NotificationSettings());
+    AsyncNotifierProvider<NotificationSettingsNotifier, NotificationSettings>(
+  NotificationSettingsNotifier.new,
+);
 
 // ──────────────────────────────────────────────────────────────
 // 알림 서비스 (출발 권장 / 브리핑 스케줄링)
@@ -90,6 +120,7 @@ class AppNotificationService {
   static Future<void> init() async {
     if (_initialized) return;
     tz.initializeTimeZones();
+    tz.setLocalLocation(tz.getLocation('Asia/Seoul'));
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const ios = DarwinInitializationSettings(
       requestAlertPermission: true,
@@ -99,6 +130,11 @@ class AppNotificationService {
     await _plugin.initialize(
       const InitializationSettings(android: android, iOS: ios),
     );
+    // Android 13+ 알림 권한 요청
+    await _plugin
+        .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
     await _tts.setLanguage('ko-KR');
     await _tts.setSpeechRate(0.5);
     _initialized = true;
@@ -116,11 +152,19 @@ class AppNotificationService {
     final now = DateTime.now();
     final weekday = _weekdayKey(now.weekday); // 'MON', 'TUE', ...
 
+    debugPrint("===== 출발 알림 스케줄 시작 =====");
+    debugPrint("현재시간: $now");
+    print("TZ: ${tz.local.name}");
+    debugPrint("오늘 요일: $weekday");
+
     for (final routine in routines) {
+      debugPrint("루틴명: ${routine.routineName}");
       final days = routine.days as List<String>;
+      debugPrint("루틴 요일: $days");
       if (!days.contains(weekday)) continue;
 
       final deptTime = routine.recommendedDepartureTime as String; // 'HH:mm'
+      debugPrint("출발시간: $deptTime");
       if (deptTime == '--:--') continue;
 
       final parts = deptTime.split(':');
@@ -130,10 +174,12 @@ class AppNotificationService {
 
       var scheduledTime = DateTime(now.year, now.month, now.day, hour, minute)
           .subtract(Duration(minutes: minutesBefore));
+      debugPrint("알림 예정 시간: $scheduledTime");
 
       if (scheduledTime.isBefore(now)) continue; // 이미 지난 시간
 
       final tzScheduled = tz.TZDateTime.from(scheduledTime, tz.local);
+      debugPrint("알림 등록 완료");
 
       await _plugin.zonedSchedule(
         _departureNotifId,
@@ -150,7 +196,7 @@ class AppNotificationService {
           ),
           iOS: DarwinNotificationDetails(),
         ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
       );
@@ -312,7 +358,7 @@ class AppNotificationService {
         ),
         iOS: const DarwinNotificationDetails(),
       ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: allowedWeekdays == null
@@ -352,10 +398,17 @@ class _NotificationSettingsScreenState
     AppNotificationService.init();
   }
 
+  Future<void> _update(
+      NotificationSettings Function(NotificationSettings) fn) async {
+    final current = ref.read(notificationSettingsProvider).valueOrNull;
+    if (current == null) return;
+    await ref
+        .read(notificationSettingsProvider.notifier)
+        .updateAndSave(fn(current));
+  }
+
   Future<void> _onDepartureAlertChanged(bool value, NotificationSettings s) async {
-    ref.read(notificationSettingsProvider.notifier).update(
-      (old) => old.copyWith(departureAlert: value),
-    );
+    await _update((old) => old.copyWith(departureAlert: value));
     if (value) {
       await _rescheduleDepartureAlerts(s.copyWith(departureAlert: value));
     } else {
@@ -364,17 +417,16 @@ class _NotificationSettingsScreenState
   }
 
   Future<void> _onDepartureMinutesChanged(String v, NotificationSettings s) async {
-    ref.read(notificationSettingsProvider.notifier).update(
-      (old) => old.copyWith(departureMinutes: v),
-    );
+    await _update((old) => old.copyWith(departureMinutes: v));
     if (s.departureAlert) {
       await _rescheduleDepartureAlerts(s.copyWith(departureMinutes: v));
     }
   }
 
   Future<void> _rescheduleDepartureAlerts(NotificationSettings s) async {
+    final client = ref.read(apiClientProvider);
+    final repo = ApiRoutineRepository(client);
     try {
-      final repo = ApiRoutineRepository(ref.read(apiClientProvider));
       final routines = await repo.getRoutines();
       await AppNotificationService.scheduleDepartureAlerts(
         routines: routines,
@@ -386,9 +438,7 @@ class _NotificationSettingsScreenState
   }
 
   Future<void> _onBriefingAlertChanged(bool value, NotificationSettings s) async {
-    ref.read(notificationSettingsProvider.notifier).update(
-      (old) => old.copyWith(briefingAlert: value),
-    );
+    await _update((old) => old.copyWith(briefingAlert: value));
     if (value) {
       await _rescheduleBriefingAlerts(s.copyWith(briefingAlert: value));
     } else {
@@ -404,7 +454,7 @@ class _NotificationSettingsScreenState
 
   @override
   Widget build(BuildContext context) {
-    final s = ref.watch(notificationSettingsProvider);
+    final asyncSettings = ref.watch(notificationSettingsProvider);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -413,7 +463,30 @@ class _NotificationSettingsScreenState
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
         leading: const BackButton(),
       ),
-      body: ListView(
+      body: asyncSettings.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('설정을 불러오지 못했어요.',
+                  style: TextStyle(fontSize: 15)),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () =>
+                    ref.invalidate(notificationSettingsProvider),
+                child: const Text('다시 시도'),
+              ),
+            ],
+          ),
+        ),
+        data: (s) => _buildBody(context, s),
+      ),
+    );
+  }
+
+  Widget _buildBody(BuildContext context, NotificationSettings s) {
+    return ListView(
         padding: EdgeInsets.only(bottom: 32 + MediaQuery.of(context).padding.bottom),
         children: [
           const SizedBox(height: 12),
@@ -441,33 +514,27 @@ class _NotificationSettingsScreenState
                   ),
                 const Divider(height: 1, indent: 56),
 
-                // 하차 알림 (구: 승하차 알림)
+                // 하차 알림
                 _ToggleItem(
                   icon: Icons.vibration,
                   emoji: '📳',
                   title: '하차 알림',
                   description: '지하철·버스 하차 전 알림을 받아요',
                   value: s.alightingAlert,
-                  onChanged: (v) => ref
-                      .read(notificationSettingsProvider.notifier)
-                      .update((old) => old.copyWith(alightingAlert: v)),
+                  onChanged: (v) => _update((old) => old.copyWith(alightingAlert: v)),
                 ),
                 if (s.alightingAlert) ...[
                   _SubSetting(
                     label: '알림 방식',
                     chips: ['진동', '소리', '진동+소리'],
                     selected: s.alightingMode,
-                    onSelected: (v) => ref
-                        .read(notificationSettingsProvider.notifier)
-                        .update((old) => old.copyWith(alightingMode: v)),
+                    onSelected: (v) => _update((old) => old.copyWith(alightingMode: v)),
                   ),
                   _SubSetting(
                     label: '하차 몇 정류장 전에 알림받을까요?',
                     chips: ['1정류장 전', '2정류장 전', '3정류장 전'],
                     selected: s.alightingStops,
-                    onSelected: (v) => ref
-                        .read(notificationSettingsProvider.notifier)
-                        .update((old) => old.copyWith(alightingStops: v)),
+                    onSelected: (v) => _update((old) => old.copyWith(alightingStops: v)),
                   ),
                 ],
                 const Divider(height: 1, indent: 56),
@@ -480,9 +547,7 @@ class _NotificationSettingsScreenState
                   description: '음성으로 경로 단계를 안내받아요',
                   value: s.ttsEnabled,
                   onChanged: (v) {
-                    ref
-                        .read(notificationSettingsProvider.notifier)
-                        .update((old) => old.copyWith(ttsEnabled: v));
+                    _update((old) => old.copyWith(ttsEnabled: v));
                     if (!v) AppNotificationService.stopTts();
                   },
                 ),
@@ -491,9 +556,7 @@ class _NotificationSettingsScreenState
                     label: '안내 시점',
                     chips: ['매 단계마다', '환승 시에만', '출발·도착만'],
                     selected: s.ttsMode,
-                    onSelected: (v) => ref
-                        .read(notificationSettingsProvider.notifier)
-                        .update((old) => old.copyWith(ttsMode: v)),
+                    onSelected: (v) => _update((old) => old.copyWith(ttsMode: v)),
                   ),
               ],
             ),
@@ -516,7 +579,6 @@ class _NotificationSettingsScreenState
                 ),
                 if (s.briefingAlert) ...[
                   const Divider(height: 1),
-                  // 아침 브리핑 시간
                   _BriefingTimeRow(
                     label: '아침 브리핑',
                     description: '실시간 날씨 · 교통 이슈 · 출발 시간 안내',
@@ -524,9 +586,7 @@ class _NotificationSettingsScreenState
                     initialHour: 7,
                     initialMinute: 30,
                     onChanged: (t) {
-                      ref
-                          .read(notificationSettingsProvider.notifier)
-                          .update((old) => old.copyWith(morningTime: t));
+                      _update((old) => old.copyWith(morningTime: t));
                       _rescheduleBriefingAlerts(s.copyWith(morningTime: t));
                     },
                   ),
@@ -535,7 +595,6 @@ class _NotificationSettingsScreenState
             ),
           ),
         ],
-      ),
     );
   }
 }
