@@ -1,5 +1,8 @@
+import 'package:flutter/foundation.dart';
 import '../models/weather_model.dart';
 import '../models/route_model.dart';
+import 'package:dio/dio.dart';
+import 'package:ruttu_app/core/constants/api_constants.dart';
 
 // GET /{user_id} AI 요약
 class AiSummaryModel {
@@ -35,8 +38,72 @@ abstract class BriefingRepository {
   Future<AiSummaryModel?> getAiSummary(int userId);
   Future<List<ScheduleItemModel>> getScheduleItems();
   Future<RouteModel?> getMeetingRoute();
+  Future<BriefingWeatherModel> getBriefingWeather();
+  Future<List<BriefingCalendarGroup>> getBriefingCalendar();
 }
+// ── 실제 API 구현체 ──────────────────────────────────────────────────────────
 
+class ApiBriefingRepository implements BriefingRepository {
+  final Dio _dio;
+  ApiBriefingRepository(this._dio);
+
+  @override
+  Future<WeatherAirQualityModel> getWeatherAirQuality() =>
+      MockBriefingRepository().getWeatherAirQuality();
+
+  @override
+  Future<List<IssueModel>> getTodayIssues() =>
+      MockBriefingRepository().getTodayIssues();
+
+  @override
+  Future<AiSummaryModel?> getAiSummary(int userId) =>
+      MockBriefingRepository().getAiSummary(userId);
+
+  @override
+  Future<RouteModel?> getMeetingRoute() =>
+      MockBriefingRepository().getMeetingRoute();
+
+  // ── 새 API ──────────────────────────────────────────────
+
+  @override
+  Future<BriefingWeatherModel> getBriefingWeather() async {
+    final res = await _dio.get(ApiConstants.briefingWeatherNew);
+    return BriefingWeatherModel.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<List<BriefingCalendarGroup>> getBriefingCalendar() async {
+    debugPrint('[BriefingRepo] GET ${ApiConstants.briefingCalendar}');
+    final res = await _dio.get(ApiConstants.briefingCalendar);
+    debugPrint('[BriefingRepo] calendar raw: ${res.data}');
+    final list = res.data as List<dynamic>;
+    final groups = list
+        .map((e) => BriefingCalendarGroup.fromJson(e as Map<String, dynamic>))
+        .toList();
+    debugPrint('[BriefingRepo] parsed ${groups.length} groups, '
+        '${groups.expand((g) => g.items).length} events');
+    return groups;
+  }
+
+  /// 스케줄 카드용: 모든 캘린더 그룹의 이벤트를 시간순으로 병합
+  @override
+  Future<List<ScheduleItemModel>> getScheduleItems() async {
+    final groups = await getBriefingCalendar();
+    final events = groups.expand((g) => g.items).toList()
+      ..sort((a, b) {
+        final av = a.start?.value ?? 0;
+        final bv = b.start?.value ?? 0;
+        return av.compareTo(bv);
+      });
+    return events
+        .map((e) => ScheduleItemModel(
+              time:     e.startTimeLabel,
+              title:    e.summary,
+              location: e.location,
+            ))
+        .toList();
+  }
+}
 class MockBriefingRepository implements BriefingRepository {
   @override
   Future<WeatherAirQualityModel> getWeatherAirQuality() async {
@@ -110,6 +177,16 @@ class MockBriefingRepository implements BriefingRepository {
         location: '화상 미팅 (Zoom)',
       ),
     ];
+  }
+
+  @override
+  Future<BriefingWeatherModel> getBriefingWeather()async {
+    throw UnimplementedError('Use ApiBriefingRepository for real data');
+  }
+
+  @override
+  Future<List<BriefingCalendarGroup>> getBriefingCalendar() async {
+    throw UnimplementedError('Use ApiBriefingRepository for real data');
   }
 
   @override

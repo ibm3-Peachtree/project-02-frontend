@@ -1,12 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../data/models/weather_model.dart';
 import '../../../data/models/route_model.dart';
 import '../../../data/repositories/briefing_repository.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../auth/providers/network_provider.dart';
 
-final briefingRepositoryProvider = Provider<BriefingRepository>(
-  (_) => MockBriefingRepository(),
-);
+final briefingRepositoryProvider = Provider<BriefingRepository>((ref) =>
+    ApiBriefingRepository(ref.read(apiClientProvider).dio));
 
 class BriefingState {
   final WeatherAirQualityModel? weather;
@@ -15,6 +16,10 @@ class BriefingState {
   final List<ScheduleItemModel> scheduleItems;
   final RouteModel? meetingRoute;
   final bool isLoading;
+  // 새 API 결과
+  final BriefingWeatherModel? briefingWeather;
+  final List<BriefingCalendarGroup> calendarGroups;
+  final String? calendarError;
 
   const BriefingState({
     this.weather,
@@ -23,6 +28,9 @@ class BriefingState {
     this.scheduleItems = const [],
     this.meetingRoute,
     this.isLoading = false,
+    this.briefingWeather,
+    this.calendarGroups = const [],
+    this.calendarError,
   });
 
   BriefingState copyWith({
@@ -32,14 +40,20 @@ class BriefingState {
     List<ScheduleItemModel>? scheduleItems,
     RouteModel? meetingRoute,
     bool? isLoading,
+    BriefingWeatherModel? briefingWeather,
+    List<BriefingCalendarGroup>? calendarGroups,
+    String? calendarError,
   }) =>
       BriefingState(
-        weather:       weather       ?? this.weather,
-        issues:        issues        ?? this.issues,
-        aiSummary:     aiSummary     ?? this.aiSummary,
-        scheduleItems: scheduleItems ?? this.scheduleItems,
-        meetingRoute:  meetingRoute  ?? this.meetingRoute,
-        isLoading:     isLoading     ?? this.isLoading,
+        weather:         weather         ?? this.weather,
+        issues:          issues          ?? this.issues,
+        aiSummary:       aiSummary       ?? this.aiSummary,
+        scheduleItems:   scheduleItems   ?? this.scheduleItems,
+        meetingRoute:    meetingRoute    ?? this.meetingRoute,
+        isLoading:       isLoading       ?? this.isLoading,
+        briefingWeather: briefingWeather ?? this.briefingWeather,
+        calendarGroups:  calendarGroups  ?? this.calendarGroups,
+        calendarError:   calendarError   ?? this.calendarError,
       );
 }
 
@@ -76,9 +90,6 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
       _repository.getTodayIssues()
           .then((v) => issues = v)
           .catchError((_) {}),
-      _repository.getScheduleItems()
-          .then((v) => scheduleItems = v)
-          .catchError((_) {}),
       _repository.getMeetingRoute()
           .then((v) => meetingRoute = v)
           .catchError((_) {}),
@@ -88,12 +99,36 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
             .catchError((_) {}),
     ]);
 
+    BriefingWeatherModel? briefingWeather;
+    List<BriefingCalendarGroup> calendarGroups = const [];
+    String? calendarError;
+
+    await Future.wait([
+      _repository.getBriefingWeather()
+          .then((v) => briefingWeather = v)
+          .catchError((_) {}),
+      _repository.getBriefingCalendar()
+          .then((v) {
+            calendarGroups = v;
+            debugPrint('[BriefingCalendar] success: ${v.length} groups, '
+                '${v.expand((g) => g.items).length} events');
+          })
+          .catchError((e, st) {
+            calendarError = e.toString();
+            debugPrint('[BriefingCalendar] ERROR: $e');
+            debugPrint('[BriefingCalendar] STACK: $st');
+          }),
+    ]);
+
     state = BriefingState(
-      weather:       weather,
-      issues:        issues,
-      scheduleItems: scheduleItems,
-      meetingRoute:  meetingRoute,
-      aiSummary:     aiSummary,
+      weather:         weather,
+      issues:          issues,
+      scheduleItems:   scheduleItems,
+      meetingRoute:    meetingRoute,
+      aiSummary:       aiSummary,
+      briefingWeather: briefingWeather,
+      calendarGroups:  calendarGroups,
+      calendarError:   calendarError,
     );
   }
 }

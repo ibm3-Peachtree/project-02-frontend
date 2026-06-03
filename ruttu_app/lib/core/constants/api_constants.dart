@@ -75,6 +75,8 @@ class ApiConstants {
 
   // ── 13. Briefing (FastAPI) ───────────────────────────────
   static const briefingRoute = '/me/briefing/route';
+  static const briefingWeatherNew = '/me/briefing/weather';
+  static const briefingCalendar   = '/me/briefing/calendar';
   static const briefingWeather = '/me/briefing/weather-air-quality';
   static String aiSummary(int userId) => '/$userId';
 }

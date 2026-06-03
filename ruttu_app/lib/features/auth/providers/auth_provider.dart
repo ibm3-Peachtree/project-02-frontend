@@ -81,7 +81,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       final googleSignIn = GoogleSignIn(
-        scopes: ['openid', 'email', 'profile'],
+        scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.readonly'],
         serverClientId: EnvConfig.googleServerClientId,
       );
       final googleUser = await googleSignIn.signIn();
@@ -96,6 +96,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final googleAuth = await googleUser.authentication;
 
       final idToken = googleAuth.idToken;
+      final accessToken = googleAuth.accessToken;
       if (idToken == null) {
         // serverClientId가 잘못됐거나 Google Cloud Console 설정 문제
         state = state.copyWith(
@@ -105,7 +106,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         );
         return;
       }
-      final response = await _repository.signInWithGoogle(idToken);
+      final response = await _repository.signInWithGoogle(idToken, accessToken: accessToken);
 
       // 휴먼 계정 처리: status == "DORMANT" → 복구 화면으로 이동
       if (response.status == 'DORMANT') {

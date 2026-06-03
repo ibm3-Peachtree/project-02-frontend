@@ -114,3 +114,133 @@ class WeatherAirQualityModel {
   /// 미세먼지(PM10) 서울 등급 라벨
   String get pm10Label => airQuality?.pm10.seoul ?? '—';
 }
+
+// ── GET /me/briefing/weather 응답 (ResponseWeatherDto) ──────────────────────
+
+class BriefingWeatherModel {
+  final double tmp;
+  final double minTemp;
+  final double maxTemp;
+  final String sky;
+  final String pcp;
+  final String pm10;
+  final String pm25;
+  final String clothes;
+  final String supplies;
+
+  const BriefingWeatherModel({
+    required this.tmp,
+    required this.minTemp,
+    required this.maxTemp,
+    required this.sky,
+    required this.pcp,
+    required this.pm10,
+    required this.pm25,
+    required this.clothes,
+    required this.supplies,
+  });
+
+  factory BriefingWeatherModel.fromJson(Map<String, dynamic> json) =>
+      BriefingWeatherModel(
+        tmp:      (json['tmp']      as num?)?.toDouble() ?? 0.0,
+        minTemp:  (json['minTemp']  as num?)?.toDouble() ?? 0.0,
+        maxTemp:  (json['maxTemp']  as num?)?.toDouble() ?? 0.0,
+        sky:      (json['sky']      ?? '').toString(),
+        pcp:      (json['pcp']      ?? '').toString(),
+        pm10:     (json['pm10']     ?? '').toString(),
+        pm25:     (json['pm25']     ?? '').toString(),
+        clothes:  (json['clothes']  ?? '').toString(),
+        supplies: (json['supplies'] ?? '').toString(),
+      );
+}
+
+// ── GET /me/briefing/calendar 응답 (CalendarItemsDto) ───────────────────────
+
+class BriefingCalendarItemDateTime {
+  final int? value;
+  final bool dateOnly;
+  final int timeZoneShift;
+
+  const BriefingCalendarItemDateTime({
+    this.value,
+    this.dateOnly = false,
+    this.timeZoneShift = 540,
+  });
+
+  static BriefingCalendarItemDateTime? fromRaw(dynamic raw) {
+    if (raw == null) return null;
+    final outer = raw as Map<String, dynamic>;
+    final inner = outer['dateTime'];
+    if (inner == null) return null;
+    final map = inner as Map<String, dynamic>;
+    return BriefingCalendarItemDateTime(
+      value:         (map['value']        as num?)?.toInt(),
+      dateOnly:      (map['dateOnly']      as bool?) ?? false,
+      timeZoneShift: (map['timeZoneShift'] as num?)?.toInt() ?? 540,
+    );
+  }
+
+  DateTime? toDateTime() {
+    if (value == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(value!, isUtc: true).toLocal();
+  }
+}
+
+class BriefingCalendarEvent {
+  final String summary;
+  final String? description;
+  final String? location;
+  final BriefingCalendarItemDateTime? start;
+  final BriefingCalendarItemDateTime? end;
+
+  const BriefingCalendarEvent({
+    required this.summary,
+    this.description,
+    this.location,
+    this.start,
+    this.end,
+  });
+
+  factory BriefingCalendarEvent.fromJson(Map<String, dynamic> json) {
+    return BriefingCalendarEvent(
+      summary:     (json['summary']    ?? '').toString(),
+      description: json['description'] as String?,
+      location:    json['location']    as String?,
+      start:       BriefingCalendarItemDateTime.fromRaw(json['start']),
+      end:         BriefingCalendarItemDateTime.fromRaw(json['end']),
+    );
+  }
+
+  String get startTimeLabel {
+    if (start?.dateOnly == true) return '종일';
+    final dt = start?.toDateTime();
+    if (dt == null) return '';
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  int get sortKey => start?.value ?? 0;
+}
+
+class BriefingCalendarGroup {
+  final String summary;   // 캘린더 이름
+  final String? description;
+  final List<BriefingCalendarEvent> items;
+
+  const BriefingCalendarGroup({
+    required this.summary,
+    this.description,
+    required this.items,
+  });
+
+  factory BriefingCalendarGroup.fromJson(Map<String, dynamic> json) =>
+      BriefingCalendarGroup(
+        summary:     (json['summary']     ?? '').toString(),
+        description: json['description']  as String?,
+        items: (json['items'] as List<dynamic>? ?? [])
+            .map((e) => BriefingCalendarEvent.fromJson(
+                e as Map<String, dynamic>))
+            .toList(),
+      );
+}

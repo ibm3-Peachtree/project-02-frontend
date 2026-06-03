@@ -35,7 +35,7 @@ class LoginResponse {
 }
 
 abstract class AuthRepository {
-  Future<LoginResponse> signInWithGoogle(String idToken);
+  Future<LoginResponse> signInWithGoogle(String idToken, {String? accessToken});
   Future<void> updateNickname(String nickname);
   Future<bool> isNicknameAvailable(String nickname);
   Future<UserModel?> getCachedUser();
@@ -55,11 +55,13 @@ class ApiAuthRepository implements AuthRepository {
   String? _lastIdToken; // DORMANT/WITHDRAWN 복구 시 재사용
 
   @override
-  Future<LoginResponse> signInWithGoogle(String idToken) async {
+  Future<LoginResponse> signInWithGoogle(String idToken, {String? accessToken}) async {
     _lastIdToken = idToken; // 복구용으로 저장
+    final body = <String, dynamic>{'idToken': idToken};
+    if (accessToken != null) body['accessToken'] = accessToken;
     final res = await _dio.post(
       ApiConstants.googleLogin, // '/auth/google'
-      data: {'idToken': idToken},
+      data: body,
     );
     final loginRes = LoginResponse.fromJson(res.data);
     // 로그인 성공 시 유저 캐싱
@@ -166,7 +168,7 @@ class MockAuthRepository implements AuthRepository {
   static const _takenNicknames = ['admin', '관리자', 'ruttu', '루뚜'];
 
   @override
-  Future<LoginResponse> signInWithGoogle(String idToken) async {
+  Future<LoginResponse> signInWithGoogle(String idToken, {String? accessToken}) async {
     await Future.delayed(const Duration(milliseconds: 800));
     _cachedUser = const UserModel(
       userId: 1001,
