@@ -4,6 +4,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
 import '../../../core/config/env_config.dart';
+import '../../../data/models/user_model.dart';
 import '../../../data/repositories/auth_repository.dart';
 import '../../../data/services/token_storage.dart';
 import 'auth_state.dart';
@@ -76,15 +77,25 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   bool _isRestoringAccount = false; // 복구 후 재로그인 중일 때 탈퇴 분기 무시
 
+  // GoogleSignIn 인스턴스를 필드로 유지 — 매번 새로 만들면 signIn() 후
+  // authentication 호출 시 컨텍스트가 달라져 idToken이 null이 되는 버그가 있음
+  final _googleSignIn = GoogleSignIn(
+    scopes: ['openid', 'email', 'profile',
+      'https://www.googleapis.com/auth/calendar.readonly'],
+    serverClientId: EnvConfig.googleServerClientId,
+  );
+
   /// Google Sign-In SDK → idToken → POST /auth/google
   Future<void> signInWithGoogle() async {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
-      final googleSignIn = GoogleSignIn(
-        scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.readonly'],
-        serverClientId: EnvConfig.googleServerClientId,
-      );
-      final googleUser = await googleSignIn.signIn();
+      debugPrint('[Auth] Google Sign-In 시작');
+      debugPrint('[Auth] serverClientId: \${EnvConfig.googleServerClientId}');
+
+      // 이전 세션이 남아있으면 signOut 후 재시도 (캐시된 계정 문제 방지)
+      await _googleSignIn.signOut();
+      final googleUser = await _googleSignIn.signIn();
+      debugPrint('[Auth] googleUser: \$googleUser');
 
       if (googleUser == null) {
         state = state.copyWith(
@@ -97,15 +108,20 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
       final idToken = googleAuth.idToken;
       final accessToken = googleAuth.accessToken;
+      debugPrint('[Auth] idToken null? \${idToken == null}');
+      debugPrint('[Auth] accessToken null? \${accessToken == null}');
+
       if (idToken == null) {
         // serverClientId가 잘못됐거나 Google Cloud Console 설정 문제
         state = state.copyWith(
           isLoading: false,
           status: AuthStatus.unauthenticated,
-          errorMessage: 'Google 인증 토큰을 받지 못했습니다. 잠시 후 다시 시도해주세요.',
+          errorMessage: 'Google 인증 토큰을 받지 못했습니다.\n'
+              'GOOGLE_SERVER_CLIENT_ID 설정을 확인해주세요.',
         );
         return;
       }
+      debugPrint('[Auth] POST /auth/google 요청');
       final response = await _repository.signInWithGoogle(idToken, accessToken: accessToken);
 
       // 휴먼 계정 처리: status == "DORMANT" → 복구 화면으로 이동
@@ -124,11 +140,25 @@ class AuthNotifier extends StateNotifier<AuthState> {
         userId: response.userId,
       );
 
-      final user = await _repository.getCachedUser();
+      // 로그인 직후 서버에서 최신 유저 정보 조회 (닉네임 포함)
+      UserModel? user;
+      try {
+        user = await _repository.getMyInfo();
+      } catch (_) {
+        user = await _repository.getCachedUser();
+      }
+
+      // 신규 가입이거나 닉네임이 없으면 닉네임 설정 화면으로
+      final hasNickname = user?.hasNickname ?? false;
+      AuthStatus nextStatus;
+      if (response.isNew || !hasNickname) {
+        nextStatus = AuthStatus.needsNickname;
+      } else {
+        nextStatus = AuthStatus.authenticated;
+      }
+
       state = AuthState(
-        status: response.isNew
-            ? AuthStatus.needsOnboarding
-            : AuthStatus.authenticated,
+        status: nextStatus,
         user: user,
       );
 
@@ -169,12 +199,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // 닉네임 변경 후 서버에서 최신 정보 재조회 (실제 서버 값 반영)
       try {
         final user = await _repository.getMyInfo();
-        state = AuthState(status: AuthStatus.authenticated, user: user);
+        // 닉네임 설정 완료 → 온보딩으로 (최초 가입 흐름)
+        state = AuthState(status: AuthStatus.needsOnboarding, user: user);
       } catch (_) {
         // getMyInfo 실패 시 로컬 캐시로 UI 즉시 갱신
         final cached = await _repository.getCachedUser();
         state = AuthState(
-          status: AuthStatus.authenticated,
+          status: AuthStatus.needsOnboarding,
           user: cached?.copyWith(nickname: nickname),
         );
       }
@@ -216,7 +247,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       debugPrint('로그아웃 API 실패 (무시됨): $e');
     } finally {
       await _tokenStorage.clearTokens();
-      await GoogleSignIn().signOut();
+      await _googleSignIn.signOut();
       state = const AuthState(status: AuthStatus.unauthenticated);
     }
   }
@@ -236,7 +267,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // API 오류가 나더라도 로컬 토큰은 반드시 삭제하고 로그아웃 처리
     } finally {
       await _tokenStorage.clearAll();
-      await GoogleSignIn().signOut();
+      await _googleSignIn.signOut();
       state = const AuthState(status: AuthStatus.unauthenticated);
     }
   }

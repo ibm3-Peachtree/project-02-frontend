@@ -9,6 +9,8 @@ import '../../../data/models/routine_model.dart';
 import '../../../data/models/route_model.dart';
 import '../../../data/models/weather_model.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../auth/providers/auth_state.dart';
+import '../../auth/screens/onboarding_screen.dart';
 import '../../briefing/providers/briefing_provider.dart';
 // ✅ 버그 수정: live_location_provider import 제거 → homeProvider 충돌 해소
 //   live_location_provider 는 home_provider.dart 에서만 import
@@ -19,6 +21,10 @@ import '../providers/live_location_provider.dart'
 import '../../routine/providers/routine_provider.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
 import '../../../core/widgets/live_route_tabs.dart';
+import 'mock_briefing_screen.dart';
+import 'mock_community_screen.dart';
+import 'mock_report_screen.dart';
+import 'mock_routine_screen.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -83,6 +89,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     ref.watch(liveLocationProvider);
     final status = ref.watch(homeProvider.select((s) => s.status));
     final isLoading = ref.watch(homeProvider.select((s) => s.isLoading));
+    final authStatus = ref.watch(authProvider).status;
+
+    // 최초 가입 온보딩: 홈 위에 슬라이드 오버레이
+    if (authStatus == AuthStatus.needsOnboarding) {
+      return const _HomeOnboardingOverlay();
+    }
 
     if (isLoading && status == HomeStatus.noRoutine) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -107,6 +119,136 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
       ],
     );
+  }
+}
+
+// ── 최초 가입 온보딩 오버레이 (홈 화면에서 보여주는 슬라이드) ──────
+class _HomeOnboardingOverlay extends ConsumerStatefulWidget {
+  const _HomeOnboardingOverlay();
+
+  @override
+  ConsumerState<_HomeOnboardingOverlay> createState() =>
+      _HomeOnboardingOverlayState();
+}
+
+class _HomeOnboardingOverlayState
+    extends ConsumerState<_HomeOnboardingOverlay> {
+  final _controller = PageController();
+  int _currentPage = 0;
+  static const _totalPages = 4;
+
+  void _next() {
+    if (_currentPage < _totalPages - 1) {
+      _controller.nextPage(
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeInOut,
+      );
+    } else {
+      _finish();
+    }
+  }
+
+  void _finish() {
+    ref.read(authProvider.notifier).completeOnboarding();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isLast = _currentPage == _totalPages - 1;
+
+    return PopScope(
+      // 첫 페이지면 뒤로 가기 막음, 아니면 이전 페이지로
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_currentPage > 0) {
+          _controller.previousPage(
+            duration: const Duration(milliseconds: 350),
+            curve: Curves.easeInOut,
+          );
+        }
+      },
+      child: Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _finish,
+                child: const Text(
+                  '건너뛰기',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                ),
+              ),
+            ),
+            Expanded(
+              child: PageView(
+                controller: _controller,
+                onPageChanged: (i) => setState(() => _currentPage = i),
+                children: const [
+                  OnbPage1(),
+                  OnbPage2(),
+                  OnbPage3(),
+                  OnbPage4(),
+                ],
+              ),
+            ),
+            // 페이지 인디케이터
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                _totalPages,
+                (i) => AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: _currentPage == i ? 24 : 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: _currentPage == i
+                        ? AppColors.primary
+                        : AppColors.border,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 28),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: _next,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    elevation: 0,
+                  ),
+                  child: Text(
+                    isLast ? '시작하기' : '다음',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 32),
+          ],
+        ),
+      ),
+    ), // Scaffold
+    ); // PopScope
   }
 }
 
@@ -297,7 +439,9 @@ class _NoTodayRoutineView extends ConsumerWidget {
                           icon: Icons.wb_sunny_outlined,
                           label: 'AI 브리핑',
                           color: AppColors.secondary,
-                          onTap: () => context.go(RouteConstants.briefing),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const MockBriefingScreen()),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -306,7 +450,9 @@ class _NoTodayRoutineView extends ConsumerWidget {
                           icon: Icons.people_outline_rounded,
                           label: '커뮤니티',
                           color: const Color(0xFF6366F1),
-                          onTap: () => context.go(RouteConstants.community),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const MockCommunityScreen()),
+                          ),
                         ),
                       ),
                     ],
@@ -594,9 +740,9 @@ class _EmptyRoutineSection extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 20),
-          // ── 빠른 메뉴 ──────────────────────────────────
+          // ── 메뉴 설명 ──────────────────────────────────
           const Text(
-            '빠른 메뉴',
+            '메뉴 설명',
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w700,
@@ -611,25 +757,42 @@ class _EmptyRoutineSection extends StatelessWidget {
                   icon: Icons.add_circle_outline_rounded,
                   label: '루틴 추가',
                   color: AppColors.primary,
-                  onTap: () => context.go(RouteConstants.routine),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MockRoutineScreen()),
+                  ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
                 child: _QuickMenuCard(
                   icon: Icons.wb_sunny_outlined,
                   label: 'AI 브리핑',
                   color: AppColors.secondary,
-                  onTap: () => context.go(RouteConstants.briefing),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MockBriefingScreen()),
+                  ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
                 child: _QuickMenuCard(
                   icon: Icons.people_outline_rounded,
                   label: '커뮤니티',
                   color: const Color(0xFF6366F1),
-                  onTap: () => context.go(RouteConstants.community),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MockCommunityScreen()),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _QuickMenuCard(
+                  icon: Icons.bar_chart_rounded,
+                  label: '리포트',
+                  color: const Color(0xFF0D7A6B),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MockReportScreen()),
+                  ),
                 ),
               ),
             ],

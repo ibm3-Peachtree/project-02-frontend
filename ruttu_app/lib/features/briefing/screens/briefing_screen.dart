@@ -167,9 +167,9 @@ class _BriefingWeatherCard extends StatelessWidget {
             const SizedBox(height: 8),
             Row(
               children: [
-                _AirBadge(label: 'PM10', value: weather.pm10),
+                _AirBadge(label: '미세먼지', value: weather.pm10),
                 const SizedBox(width: 8),
-                _AirBadge(label: 'PM2.5', value: weather.pm25),
+                _AirBadge(label: '초미세먼지', value: weather.pm25),
               ],
             ),
           ],
@@ -1052,7 +1052,7 @@ class _WeatherCard extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text('PM10 ${weather.pm10Label}',
+                    Text('미세먼지 ${weather.pm10Label}',
                         style: const TextStyle(
                             fontSize: 13, color: AppColors.textSecondary)),
                   ],

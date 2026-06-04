@@ -83,6 +83,11 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
     RouteModel? meetingRoute;
     AiSummaryModel? aiSummary;
 
+    BriefingWeatherModel? briefingWeather;
+    List<BriefingCalendarGroup> calendarGroups = const [];
+    String? calendarError;
+
+    // 모든 API를 한 번에 병렬 호출 — 순차 대기 제거로 로딩 시간 단축
     await Future.wait([
       _repository.getWeatherAirQuality()
           .then((v) => weather = v)
@@ -97,13 +102,6 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
         _repository.getAiSummary(_userId!)
             .then((v) => aiSummary = v)
             .catchError((_) {}),
-    ]);
-
-    BriefingWeatherModel? briefingWeather;
-    List<BriefingCalendarGroup> calendarGroups = const [];
-    String? calendarError;
-
-    await Future.wait([
       _repository.getBriefingWeather()
           .then((v) => briefingWeather = v)
           .catchError((_) {}),

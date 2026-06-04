@@ -51,6 +51,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isOnSplash      = state.matchedLocation == RouteConstants.splash;
       final isOnNickname    = state.matchedLocation == RouteConstants.nicknameSetup;
       final isOnOnboarding  = state.matchedLocation == RouteConstants.onboarding;
+      final isOnHome        = state.matchedLocation == RouteConstants.home;
       final isOnDeleted     = state.matchedLocation == RouteConstants.accountDeleted;
       final isOnDormant     = state.matchedLocation == RouteConstants.dormantRestore;
 
@@ -65,14 +66,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         case AuthStatus.needsNickname:
           return isOnNickname ? null : RouteConstants.nicknameSetup;
         case AuthStatus.needsOnboarding:
-          return isOnOnboarding ? null : RouteConstants.onboarding;
+          // 온보딩은 홈 화면 안에서 처리
+          return isOnHome ? null : RouteConstants.home;
         case AuthStatus.dormant:
           return isOnDormant ? null : RouteConstants.dormantRestore;
         case AuthStatus.withdrawnAccount:
           // 탈퇴된 계정은 스플래시에서 다이얼로그로 처리
           return isOnSplash ? null : RouteConstants.splash;
         case AuthStatus.authenticated:
-          if (isOnSplash || isOnNickname || isOnOnboarding) return RouteConstants.home;
+          if (isOnSplash || isOnNickname || isOnOnboarding || isOnHome) return RouteConstants.home;
+          // 참고: isOnHome은 온보딩 완료 직후 홈에서 authenticated로 전환될 때 머무르게 함
           return null;
       }
     },

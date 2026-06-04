@@ -64,11 +64,11 @@ class ApiAuthRepository implements AuthRepository {
       data: body,
     );
     final loginRes = LoginResponse.fromJson(res.data);
-    // 로그인 성공 시 유저 캐싱
+    // 로그인 성공 시 유저 캐싱 (서버가 내려준 nickname 포함)
     _cachedUser = UserModel(
       userId: loginRes.userId,
       email: loginRes.email,
-      nickname: null,
+      nickname: loginRes.nickname.isNotEmpty ? loginRes.nickname : null,
     );
     return loginRes;
   }

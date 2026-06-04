@@ -13,31 +13,56 @@ class ApiClient {
             headers: const {'Content-Type': 'application/json'},
           ),
         ) {
-    // 모든 빌드에서 네트워크 로그 출력
     dio.interceptors.add(LogInterceptor(
-      requestBody: false,
-      responseBody: false,
-      error: false,
+      requestBody: kDebugMode,
+      responseBody: kDebugMode,
+      error: kDebugMode,
     ));
 
     dio.interceptors.add(
       InterceptorsWrapper(
+        // ── onRequest: API 호출 전 토큰 만료 임박 체크 → 선제 갱신 ──────────
         onRequest: (options, handler) async {
           dio.options.baseUrl = ApiConstants.springBaseUrl;
+
+          // /auth/ 경로(로그인·복구·refresh)는 토큰 갱신 로직 전부 스킵
+          // 로그인 전엔 토큰이 없으므로 갱신 시도 자체를 해선 안 됨
+          final isAuthPath = options.path.contains('/auth/');
+
+          if (!isAuthPath) {
+            final expiringSoon =
+                await _tokenStorage.isAccessTokenExpiringSoon(
+                    thresholdMinutes: 5);
+
+            if (expiringSoon) {
+              final refreshed = await _proactiveRefresh();
+              // 갱신 실패(refresh 만료)면 세션 만료 처리 후 요청 취소
+              if (!refreshed) {
+                handler.reject(
+                  DioException(
+                    requestOptions: options,
+                    type: DioExceptionType.cancel,
+                    message: 'session_expired',
+                  ),
+                  true,
+                );
+                return;
+              }
+            }
+          }
+
           final token = await _tokenStorage.getAccessToken();
           if (token != null && token.isNotEmpty) {
             options.headers['Authorization'] = 'Bearer $token';
           }
           handler.next(options);
         },
+
+        // ── onError: 401 대응 (네트워크 지연 등으로 선제 갱신을 놓친 경우) ──
         onError: (error, handler) async {
-          // 내부 에러 상세는 debug 빌드에서만 출력 (보안)
-          assert(() {
-            return true;
-          }());
+          assert(true);
           final statusCode = error.response?.statusCode;
 
-          // 401 → refreshToken으로 자동 갱신 후 재시도
           if (statusCode == 401) {
             final refresh = await _tokenStorage.getRefreshToken();
             if (refresh != null && refresh.isNotEmpty) {
@@ -58,20 +83,16 @@ class ApiClient {
                 final retryRes = await dio.fetch(error.requestOptions);
                 return handler.resolve(retryRes);
               } catch (_) {
-                // refresh도 만료 → 토큰 삭제 후 로그인 화면으로 이동
                 await _tokenStorage.clearTokens();
                 onSessionExpired?.call();
               }
             } else {
-              // refresh 토큰 자체가 없는 경우
               await _tokenStorage.clearTokens();
               onSessionExpired?.call();
             }
           }
 
           // 403 → /auth/ 경로일 때만 세션 만료 처리
-          // 그 외 403(active 루틴 없음, 권한 없음 등)은 비즈니스 오류이므로 그냥 흘려보냄
-          // ⚠️ 여기서 retry하면 무한 루프 발생하므로 절대 retry 하지 않음
           if (statusCode == 403 &&
               error.requestOptions.path.contains('/auth/') &&
               !error.requestOptions.path.contains('/auth/logout') &&
@@ -89,4 +110,34 @@ class ApiClient {
   final TokenStorage _tokenStorage;
   final VoidCallback? onSessionExpired;
   final Dio dio;
+
+  // ── 선제 갱신 헬퍼 ────────────────────────────────────────────────────────
+  // true: 갱신 성공, false: refresh 만료 → 세션 만료 처리 필요
+  Future<bool> _proactiveRefresh() async {
+    final refresh = await _tokenStorage.getRefreshToken();
+    if (refresh == null || refresh.isEmpty) {
+      await _tokenStorage.clearTokens();
+      onSessionExpired?.call();
+      return false;
+    }
+    try {
+      final refreshDio = Dio(BaseOptions(
+        baseUrl: ApiConstants.springBaseUrl,
+        headers: const {'Content-Type': 'application/json'},
+      ));
+      final res = await refreshDio.post(
+        ApiConstants.refreshToken,
+        data: {'refreshToken': refresh},
+      );
+      final newAccessToken = res.data['accessToken'] as String;
+      await _tokenStorage.saveAccessToken(newAccessToken);
+      debugPrint('[ApiClient] 액세스 토큰 선제 갱신 완료');
+      return true;
+    } catch (e) {
+      debugPrint('[ApiClient] 선제 갱신 실패: $e → 세션 만료 처리');
+      await _tokenStorage.clearTokens();
+      onSessionExpired?.call();
+      return false;
+    }
+  }
 }
