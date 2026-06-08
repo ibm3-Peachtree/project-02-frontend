@@ -16,8 +16,9 @@ class BriefingState {
   final List<ScheduleItemModel> scheduleItems;
   final RouteModel? meetingRoute;
   final bool isLoading;
-  // 새 API 결과
-  final BriefingWeatherModel? briefingWeather;
+  // 새 API 결과 — origin(출발지) / destination(도착지) 분리
+  final BriefingWeatherModel? originWeather;
+  final BriefingWeatherModel? destinationWeather;
   final String? weatherError;
   final List<BriefingCalendarGroup> calendarGroups;
   final String? calendarError;
@@ -29,7 +30,8 @@ class BriefingState {
     this.scheduleItems = const [],
     this.meetingRoute,
     this.isLoading = false,
-    this.briefingWeather,
+    this.originWeather,
+    this.destinationWeather,
     this.weatherError,
     this.calendarGroups = const [],
     this.calendarError,
@@ -42,22 +44,24 @@ class BriefingState {
     List<ScheduleItemModel>? scheduleItems,
     RouteModel? meetingRoute,
     bool? isLoading,
-    BriefingWeatherModel? briefingWeather,
+    BriefingWeatherModel? originWeather,
+    BriefingWeatherModel? destinationWeather,
     String? weatherError,
     List<BriefingCalendarGroup>? calendarGroups,
     String? calendarError,
   }) =>
       BriefingState(
-        weather:         weather         ?? this.weather,
-        issues:          issues          ?? this.issues,
-        aiSummary:       aiSummary       ?? this.aiSummary,
-        scheduleItems:   scheduleItems   ?? this.scheduleItems,
-        meetingRoute:    meetingRoute    ?? this.meetingRoute,
-        isLoading:       isLoading       ?? this.isLoading,
-        briefingWeather: briefingWeather ?? this.briefingWeather,
-        weatherError:    weatherError    ?? this.weatherError,
-        calendarGroups:  calendarGroups  ?? this.calendarGroups,
-        calendarError:   calendarError   ?? this.calendarError,
+        weather:             weather             ?? this.weather,
+        issues:              issues              ?? this.issues,
+        aiSummary:           aiSummary           ?? this.aiSummary,
+        scheduleItems:       scheduleItems       ?? this.scheduleItems,
+        meetingRoute:        meetingRoute        ?? this.meetingRoute,
+        isLoading:           isLoading           ?? this.isLoading,
+        originWeather:       originWeather       ?? this.originWeather,
+        destinationWeather:  destinationWeather  ?? this.destinationWeather,
+        weatherError:        weatherError        ?? this.weatherError,
+        calendarGroups:      calendarGroups      ?? this.calendarGroups,
+        calendarError:       calendarError       ?? this.calendarError,
       );
 }
 
@@ -87,7 +91,8 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
     RouteModel? meetingRoute;
     AiSummaryModel? aiSummary;
 
-    BriefingWeatherModel? briefingWeather;
+    BriefingWeatherModel? originWeather;
+    BriefingWeatherModel? destinationWeather;
     String? weatherError;
     List<BriefingCalendarGroup> calendarGroups = const [];
     String? calendarError;
@@ -101,11 +106,20 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
         () async { try { aiSummary = await _repository.getAiSummary(_userId!); } catch (_) {} }(),
       () async {
         try {
-          briefingWeather = await _repository.getBriefingWeather();
+          originWeather = await _repository.getOriginWeather();
         } catch (e, st) {
           weatherError = '날씨 정보를 불러오지 못했어요.';
-          debugPrint('[BriefingWeather] ERROR: $e');
-          debugPrint('[BriefingWeather] STACK: $st');
+          debugPrint('[OriginWeather] ERROR: $e');
+          debugPrint('[OriginWeather] STACK: $st');
+        }
+      }(),
+      () async {
+        try {
+          destinationWeather = await _repository.getDestinationWeather();
+        } catch (e, st) {
+          weatherError ??= '날씨 정보를 불러오지 못했어요.';
+          debugPrint('[DestinationWeather] ERROR: $e');
+          debugPrint('[DestinationWeather] STACK: $st');
         }
       }(),
       () async {
@@ -115,7 +129,6 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
           debugPrint('[BriefingCalendar] success: ${v.length} groups, '
               '${v.expand((g) => g.items).length} events');
         } catch (e, st) {
-          // 사용자에게는 간결한 메시지만 표시 (DioException 전체 노출 방지)
           calendarError = '일정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.';
           debugPrint('[BriefingCalendar] ERROR: $e');
           debugPrint('[BriefingCalendar] STACK: $st');
@@ -124,15 +137,16 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
     ]);
 
     state = BriefingState(
-      weather:         weather,
-      issues:          issues,
-      scheduleItems:   scheduleItems,
-      meetingRoute:    meetingRoute,
-      aiSummary:       aiSummary,
-      briefingWeather: briefingWeather,
-      weatherError:    weatherError,
-      calendarGroups:  calendarGroups,
-      calendarError:   calendarError,
+      weather:            weather,
+      issues:             issues,
+      scheduleItems:      scheduleItems,
+      meetingRoute:       meetingRoute,
+      aiSummary:          aiSummary,
+      originWeather:      originWeather,
+      destinationWeather: destinationWeather,
+      weatherError:       weatherError,
+      calendarGroups:     calendarGroups,
+      calendarError:      calendarError,
     );
   }
 }

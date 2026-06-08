@@ -38,7 +38,10 @@ abstract class BriefingRepository {
   Future<AiSummaryModel?> getAiSummary(int userId);
   Future<List<ScheduleItemModel>> getScheduleItems();
   Future<RouteModel?> getMeetingRoute();
-  Future<BriefingWeatherModel> getBriefingWeather();
+  /// @deprecated — use getOriginWeather / getDestinationWeather
+  Future<BriefingWeatherModel?> getBriefingWeather();
+  Future<BriefingWeatherModel?> getOriginWeather();
+  Future<BriefingWeatherModel?> getDestinationWeather();
   Future<List<BriefingCalendarGroup>> getBriefingCalendar();
 }
 // ── 실제 API 구현체 ──────────────────────────────────────────────────────────
@@ -65,10 +68,28 @@ class ApiBriefingRepository implements BriefingRepository {
 
   // ── 새 API ──────────────────────────────────────────────
 
+  /// @deprecated
   @override
-  Future<BriefingWeatherModel> getBriefingWeather() async {
-    final res = await _dio.get(ApiConstants.briefingWeatherNew);
-    return BriefingWeatherModel.fromJson(res.data as Map<String, dynamic>);
+  Future<BriefingWeatherModel?> getBriefingWeather() => getOriginWeather();
+
+  @override
+  Future<BriefingWeatherModel?> getOriginWeather() =>
+      _fetchWeather(ApiConstants.briefingWeatherOrigin);
+
+  @override
+  Future<BriefingWeatherModel?> getDestinationWeather() =>
+      _fetchWeather(ApiConstants.briefingWeatherDestination);
+
+  Future<BriefingWeatherModel?> _fetchWeather(String path) async {
+    try {
+      final res = await _dio.get(path);
+      if (res.statusCode == 204) return null;
+      if (res.data == null || res.data is! Map<String, dynamic>) return null;
+      return BriefingWeatherModel.fromJson(res.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 409) return null;
+      rethrow;
+    }
   }
 
   @override
@@ -180,7 +201,17 @@ class MockBriefingRepository implements BriefingRepository {
   }
 
   @override
-  Future<BriefingWeatherModel> getBriefingWeather()async {
+  Future<BriefingWeatherModel?> getBriefingWeather() async {
+    throw UnimplementedError('Use ApiBriefingRepository for real data');
+  }
+
+  @override
+  Future<BriefingWeatherModel?> getOriginWeather() async {
+    throw UnimplementedError('Use ApiBriefingRepository for real data');
+  }
+
+  @override
+  Future<BriefingWeatherModel?> getDestinationWeather() async {
     throw UnimplementedError('Use ApiBriefingRepository for real data');
   }
 

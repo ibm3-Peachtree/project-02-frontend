@@ -93,8 +93,14 @@ class ApiConstants {
 
   // ── 13. Briefing (FastAPI) ───────────────────────────────
   static const briefingRoute = '/me/briefing/route';
-  static const briefingWeatherNew = '/me/briefing/weather';
+  static const briefingWeatherNew         = '/me/briefing/weather';
+  static const briefingWeatherOrigin      = '/me/briefing/weather/origin';
+  static const briefingWeatherDestination = '/me/briefing/weather/destination';
   static const briefingCalendar   = '/me/briefing/calendar';
   static const briefingWeather = '/me/briefing/weather-air-quality';
+  // ── 14. Push ──────────────────────────────────────────────
+  static const fcmToken = '/users/fcm-token';  // POST — FCM 토큰 서버 등록
+  static const pushTest = '/push/test';         // POST — 테스트 푸시 (dev only)
+
   static String aiSummary(int userId) => '/$userId';
 }

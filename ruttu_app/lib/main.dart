@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'core/config/env_config.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/router.dart';
+import 'data/services/fcm_service.dart';
+import 'firebase_options.dart';
 
 // GPS 권한 요청은 최초 가입(로그인 성공) 시 auth_provider에서 1회만 수행합니다.
 // main.dart에서는 요청하지 않습니다.
@@ -16,6 +19,12 @@ void main() async {
   // 환경 변수 로드 (dev/prod 자동 선택)
   await EnvConfig.load();
   debugPrint("🔧 환경: ${EnvConfig.springBaseUrl}");
+
+  // Firebase 초기화
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // FCM 서비스 초기화 (권한 요청 + 로컬 알림 채널 설정)
+  await FcmService.instance.initialize();
 
   // 네이버 지도 초기화
   await FlutterNaverMap().init(

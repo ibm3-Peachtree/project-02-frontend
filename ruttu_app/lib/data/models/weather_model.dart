@@ -118,6 +118,7 @@ class WeatherAirQualityModel {
 // ── GET /me/briefing/weather 응답 (ResponseWeatherDto) ──────────────────────
 
 class BriefingWeatherModel {
+  final String locationName; // 주소 별칭 (예: 집, 회사)
   final double tmp;
   final double minTemp;
   final double maxTemp;
@@ -129,6 +130,7 @@ class BriefingWeatherModel {
   final String supplies;
 
   const BriefingWeatherModel({
+    required this.locationName,
     required this.tmp,
     required this.minTemp,
     required this.maxTemp,
@@ -142,6 +144,7 @@ class BriefingWeatherModel {
 
   factory BriefingWeatherModel.fromJson(Map<String, dynamic> json) =>
       BriefingWeatherModel(
+        locationName: (json['locationName'] ?? '').toString(),
         tmp:      (json['tmp']      as num?)?.toDouble() ?? 0.0,
         minTemp:  (json['minTemp']  as num?)?.toDouble() ?? 0.0,
         maxTemp:  (json['maxTemp']  as num?)?.toDouble() ?? 0.0,

@@ -66,21 +66,33 @@ class _BriefingScreenState extends ConsumerState<BriefingScreen> {
                 _AiSummaryCard(summary: state.aiSummary),
                 const SizedBox(height: 12),
 
-                // ③ 날씨 카드 (ResponseWeatherDto API 전용)
-                if (state.briefingWeather != null)
-                  _BriefingWeatherCard(weather: state.briefingWeather!)
-                else if (state.weatherError != null)
+                // ③ 출발지/도착지 날씨 카드
+                if (state.weatherError != null && state.originWeather == null && state.destinationWeather == null)
                   _WeatherErrorCard(
                     error: state.weatherError!,
                     onRetry: () => ref.read(briefingProvider.notifier).load(),
                   )
-                else
-                  _WeatherLoadingCard(),
+                else if (state.originWeather == null && state.destinationWeather == null)
+                  _WeatherLoadingCard()
+                else ...[
+                  if (state.originWeather != null)
+                    _BriefingWeatherCard(
+                      weather: state.originWeather!,
+                      isOrigin: true,
+                    ),
+                  if (state.originWeather != null && state.destinationWeather != null)
+                    const SizedBox(height: 12),
+                  if (state.destinationWeather != null)
+                    _BriefingWeatherCard(
+                      weather: state.destinationWeather!,
+                      isOrigin: false,
+                    ),
+                ],
                 const SizedBox(height: 12),
-                // ④ 준비물 브리핑 카드 (ResponseWeatherDto API 전용)
-                if (state.briefingWeather != null)
-                  _BriefingPrepCard(weather: state.briefingWeather!),
-                if (state.briefingWeather != null)
+                // ④ 준비물 브리핑 카드 — 출발지 날씨 기준
+                if (state.originWeather != null)
+                  _BriefingPrepCard(weather: state.originWeather!),
+                if (state.originWeather != null)
                   const SizedBox(height: 12),
 
                 // ⑤ 오늘의 일정 카드 (Google Calendar)
@@ -99,7 +111,21 @@ class _BriefingScreenState extends ConsumerState<BriefingScreen> {
 // ── ⑦ 새 날씨 카드 (ResponseWeatherDto 기반) ───────────────────────────────
 class _BriefingWeatherCard extends StatelessWidget {
   final BriefingWeatherModel weather;
-  const _BriefingWeatherCard({required this.weather});
+  final bool isOrigin;
+  const _BriefingWeatherCard({
+    required this.weather,
+    required this.isOrigin,
+  });
+
+  /// locationName이 있으면 그대로, 없으면 출발지/도착지 fallback
+  String get _title {
+    final name = weather.locationName.trim();
+    if (name.isNotEmpty) return '$name 날씨';
+    return isOrigin ? '출발지 날씨' : '도착지 날씨';
+  }
+
+  IconData get _icon =>
+      isOrigin ? Icons.home_outlined : Icons.place_outlined;
 
   String get _skyEmoji {
     switch (weather.sky) {
@@ -129,10 +155,10 @@ class _BriefingWeatherCard extends StatelessWidget {
             // ── 헤더 ──
             Row(
               children: [
-                const Icon(Icons.wb_sunny_outlined, color: AppColors.primary),
+                Icon(_icon, color: AppColors.primary),
                 const SizedBox(width: 8),
-                const Text('오늘의 날씨',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                Text(_title,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               ],
             ),
             const SizedBox(height: 16),
@@ -364,8 +390,6 @@ class _BriefingPrepCard extends StatelessWidget {
             Text(
               weather.clothes.isEmpty ? '정보 없음' : weather.clothes,
               style: const TextStyle(fontSize: 14, height: 1.5),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
 
             // ── 준비물 ──
@@ -381,8 +405,6 @@ class _BriefingPrepCard extends StatelessWidget {
               Text(
                 weather.supplies,
                 style: const TextStyle(fontSize: 14, height: 1.5),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
             ],
           ],

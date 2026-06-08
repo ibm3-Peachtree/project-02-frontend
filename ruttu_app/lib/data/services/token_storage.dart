@@ -9,6 +9,7 @@ class TokenStorage {
   static const _userIdKey                 = 'user_id';
   static const _hasNicknameKey            = 'has_nickname';
   static const _gpsPermissionRequestedKey = 'gps_permission_requested';
+  static const _fcmTokenKey               = 'fcm_token';
 
   // ── JWT exp 파싱 ──────────────────────────────────────────────────────────
 
@@ -103,6 +104,15 @@ class TokenStorage {
 
   Future<void> setGpsPermissionRequested() =>
       _storage.write(key: _gpsPermissionRequestedKey, value: 'true');
+
+  // ── FCM 디바이스 토큰 ─────────────────────────────────────────────────────
+
+  Future<void> saveFcmToken(String token) =>
+      _storage.write(key: _fcmTokenKey, value: token);
+
+  Future<String?> getFcmToken() => _storage.read(key: _fcmTokenKey);
+
+  Future<void> clearFcmToken() => _storage.delete(key: _fcmTokenKey);
 
   Future<void> clearAll()    => _storage.deleteAll();
   Future<void> clearTokens() => clearAll();

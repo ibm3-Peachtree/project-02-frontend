@@ -6,6 +6,8 @@ import 'package:dio/dio.dart';
 import '../../../core/config/env_config.dart';
 import '../../../data/models/user_model.dart';
 import '../../../data/repositories/auth_repository.dart';
+import '../../../data/repositories/push_repository.dart';
+import '../../../data/services/fcm_service.dart';
 import '../../../data/services/token_storage.dart';
 import 'auth_state.dart';
 import 'network_provider.dart';
@@ -18,11 +20,16 @@ final authRepositoryProvider = Provider<AuthRepository>(
   ),
 );
 
+final pushRepositoryProvider = Provider<PushRepository>(
+  (ref) => ApiPushRepository(ref.read(apiClientProvider).dio),
+);
+
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>(
   (ref) {
     final notifier = AuthNotifier(
       ref.read(authRepositoryProvider),
       ref.read(tokenStorageProvider),
+      ref.read(pushRepositoryProvider),
     );
 
     // ✅ JWT refresh 만료 이벤트 감지 → 즉시 강제 로그아웃 (순환 참조 없음)
@@ -43,8 +50,9 @@ final authProvider = StateNotifierProvider<AuthNotifier, AuthState>(
 class AuthNotifier extends StateNotifier<AuthState> {
   final AuthRepository _repository;
   final TokenStorage _tokenStorage;
+  final PushRepository _pushRepository;
 
-  AuthNotifier(this._repository, this._tokenStorage)
+  AuthNotifier(this._repository, this._tokenStorage, this._pushRepository)
       : super(const AuthState());
 
   Future<void> checkAuthStatus() async {
@@ -165,6 +173,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // ✅ 최초 가입(로그인) 시에만 GPS 권한 1회 요청
       // 이미 요청한 적 있으면 스킵, 권한이 꺼져 있으면 앱 사용 중 별도 처리
       await _requestGpsPermissionIfNeeded();
+
+      // ✅ FCM 토큰 서버 등록 (로그인마다 최신 토큰 유지)
+      await _registerFcmToken();
     } catch (e) {
 
       // 탈퇴된 계정: 서버가 401 + message에 '탈퇴' 포함 시
@@ -363,4 +374,28 @@ class AuthNotifier extends StateNotifier<AuthState> {
     } catch (e) {
       debugPrint('[GPS] 권한 요청 오류: $e');
     }
-  }}
+  }
+
+  // ── FCM 토큰 서버 등록 ────────────────────────────────────────────────────
+
+  Future<void> _registerFcmToken() async {
+    try {
+      final token = await FcmService.instance.getToken();
+      if (token == null) return;
+
+      // 이전에 등록한 토큰과 동일하면 재등록 생략 (네트워크 절약)
+      final saved = await _tokenStorage.getFcmToken();
+      if (saved == token) {
+        debugPrint('[FCM] 토큰 미변경, 재등록 생략');
+        return;
+      }
+
+      await _pushRepository.registerFcmToken(token);
+      await _tokenStorage.saveFcmToken(token);
+      debugPrint('[FCM] 토큰 등록 완료');
+    } catch (e) {
+      // FCM 등록 실패가 로그인 흐름을 막으면 안 됨 → 로깅만
+      debugPrint('[FCM] 토큰 등록 오류 (무시): $e');
+    }
+  }
+}
