@@ -1,23 +1,24 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../data/repositories/home_repository_provider.dart';
 import '../../../data/models/routine_model.dart';
 import '../../../data/models/route_model.dart';
 import '../../../data/models/weather_model.dart';
 import '../../../data/repositories/home_repository.dart';
-import '../../auth/providers/network_provider.dart';
 import 'home_state.dart';
+import 'live_route_provider.dart' show recoRouteProvider;
 
-final homeRepositoryProvider = Provider<HomeRepository>((ref) {
-  return ApiHomeRepository(ref.read(apiClientProvider).dio);
+// homeRepositoryProvider → home_repository_provider.dart
+
+final homeProvider = StateNotifierProvider<HomeNotifier, HomeState>((ref) {
+  final notifier = HomeNotifier(ref.read(homeRepositoryProvider), ref);
+  return notifier;
 });
-
-final homeProvider = StateNotifierProvider<HomeNotifier, HomeState>(
-  (ref) => HomeNotifier(ref.read(homeRepositoryProvider)),
-);
 
 class HomeNotifier extends StateNotifier<HomeState> {
   final HomeRepository _repository;
+  final Ref _ref;
 
   /// 실시간 폴링 타이머 (active 상태에서 주기적으로 백엔드 조회)
   Timer? _liveTimer;
@@ -25,7 +26,7 @@ class HomeNotifier extends StateNotifier<HomeState> {
   /// 폴링 주기 — 5초마다 status / section / recoRoute 갱신
   static const _pollInterval = Duration(seconds: 5);
 
-  HomeNotifier(this._repository) : super(const HomeState());
+  HomeNotifier(this._repository, this._ref) : super(const HomeState());
 
   Future<void> initialize({bool silent = false}) async {
     if (!silent) state = state.copyWith(isLoading: true);
@@ -104,20 +105,24 @@ class HomeNotifier extends StateNotifier<HomeState> {
       List<RouteModel> detourRouteList = [];
       bool hasIncident = false;
       String? incidentMessage;
+      debugPrint('[initialize] getRecoRouteListResponse 호출 시작');
       try {
         final recoResp = await _repository.getRecoRouteListResponse();
         recoRouteList = recoResp.recoList;
         detourRouteList = recoResp.detourList;
         hasIncident = recoResp.hasIncident;
         incidentMessage = recoResp.incidentMessage;
+        debugPrint('[initialize] 성공: reco=${recoRouteList.length}, detour=${detourRouteList.length}, hasIncident=$hasIncident');
       } catch (e) {
         debugPrint('[initialize] getRecoRouteListResponse 실패: $e');
+        // 실패 시 recoRouteProvider에 에러 상태를 전파 → 탭 진입 시 재시도 버튼 표시
+        _ref.read(recoRouteProvider.notifier).markLoadError();
       }
 
       // 추천 경로 초기 좌표:
       // preActive 상태에서는 /active/location/reco API가 403을 반환할 수 있으므로
-      // 호출하지 않는다. recoRouteCoordinates는 startRoute() 후 _poll()이
-      // getRecoCurrentSection()을 통해 채워줄 때까지 빈 상태로 유지.
+      // 호출하지 않는다. recoRouteCoordinates는 출발 후 STOMP push →
+      // updateRecoSection()을 통해 채워질 때까지 빈 상태로 유지.
       // (추천 경로 탭 지도는 출발 후에만 좌표가 표시됨)
       const List<RouteXYModel> recoCoords = [];
 
@@ -136,6 +141,20 @@ class HomeNotifier extends StateNotifier<HomeState> {
         hasIncident: hasIncident,
         incidentMessage: incidentMessage,
       );
+
+      // ✅ 추천 경로 데이터를 recoRouteProvider에 미리 주입.
+      // TabBarView 특성상 탭을 눌러야 RecoRouteTabContent.initState()가 실행되므로,
+      // initialize() 시점에 직접 주입하여 탭 진입 즉시 목록이 보이도록 한다.
+      if (recoRouteList.isNotEmpty || detourRouteList.isNotEmpty) {
+        _ref.read(recoRouteProvider.notifier).preloadList(
+          RecoRouteListResponse(
+            recoList:        recoRouteList,
+            detourList:      detourRouteList,
+            hasIncident:     hasIncident,
+            incidentMessage: incidentMessage,
+          ),
+        );
+      }
     } catch (e) {
       debugPrint('❌ initialize 실패: $e');
       state = state.copyWith(isLoading: false);
@@ -178,12 +197,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
     }
 
     // ── liveStatus ───────────────────────────────────────────────────
-    LiveStatusModel? liveStatus;
-    try {
-      liveStatus = await _repository.getLiveStatus();
-    } catch (e) {
-      debugPrint('[startRoute] getLiveStatus 실패 (무시됨): $e');
-    }
+    // liveStatusProvider(STOMP /user/queue/status)가 담당하므로 REST 호출 불필요
+    final LiveStatusModel? liveStatus = null;
 
     final stepIndex = section != null && route != null
         ? _resolvePathIndex(section, route.path.length)
@@ -241,86 +256,61 @@ class HomeNotifier extends StateNotifier<HomeState> {
       return;
     }
 
-    // ── liveStatus: 실패 시 폴링 전체를 중단하지 않고 기존 유지 ──
-    LiveStatusModel? liveStatus;
-    try {
-      liveStatus = await _repository.getLiveStatus();
-    } catch (e) {
-      debugPrint('[LivePoll] getLiveStatus 실패 (무시됨): $e');
-      return; // status 없이 좌표만 갱신하면 오히려 혼란 → 이번 폴링 스킵
-    }
-
-    // ── section: 나의 경로와 추천 경로를 항상 독립적으로 호출 ──────────
-    // 두 탭이 동시에 실행되므로 각각 독립 try-catch로 처리.
-    // 활성화되지 않은 경로는 서버가 403을 반환하므로 무시한다.
+    // ── section REST 호출 ────────────────────────────────────────────
+    // 나의 경로 중: /location/my REST 폴링
+    // 추천 경로 중: STOMP /user/queue/location/reco 구독으로 처리됨
+    //              (recoLiveRouteProvider → updateRecoSection() 경유)
+    //              REST GET /me/routines/active/location/reco 호출 제거.
     CurrentSectionModel? mySection;
-    CurrentSectionModel? recoSection;
 
-    // 나의 경로 section — 항상 시도
-    try {
-      mySection = await _repository.getCurrentSection();
-    } catch (e) {
-      debugPrint('[LivePoll] getCurrentSection 실패 (무시됨): $e');
-    }
-
-    // 추천 경로 section — isUsingRecoRoute=true일 때만 시도
-    if (state.isUsingRecoRoute) {
+    if (!state.isUsingRecoRoute) {
       try {
-        recoSection = await _repository.getRecoCurrentSection();
+        mySection = await _repository.getCurrentSection();
       } catch (e) {
-        debugPrint('[LivePoll] getRecoCurrentSection 실패 (무시됨): $e');
+        debugPrint('[LivePoll] getCurrentSection 실패 (무시됨): $e');
       }
     }
 
-    // 나의 경로 stepIndex (myCurrentSectionData 기준 — 독립)
+    // 나의 경로 stepIndex
     final myStepIdx = (mySection != null && state.myRoute != null)
         ? _resolvePathIndex(mySection, state.myRoute!.path.length)
         : state.myStepIndex;
 
-    // 추천 경로 stepIndex (recoCurrentSectionData 기준 — 독립)
-    final recoStepIdx = (recoSection != null && state.recommendedRoute != null)
-        ? _resolvePathIndex(recoSection, state.recommendedRoute!.path.length)
+    // 추천 경로 stepIndex: STOMP push(updateRecoSection)가 갱신한 값 그대로 사용
+    final recoSectionData = state.recoCurrentSectionData;
+    final recoStepIdx = (recoSectionData != null && state.recommendedRoute != null)
+        ? _resolvePathIndex(recoSectionData, state.recommendedRoute!.path.length)
         : state.recoStepIndex;
 
-    // 현재 활성 경로에 따른 section 선택
-    final activeSection = state.isUsingRecoRoute ? recoSection : mySection;
+    // 추천 경로 좌표: STOMP section의 xy 우선, 없으면 기존 유지
+    final newRecoCoords = (recoSectionData?.xy.isNotEmpty == true)
+        ? recoSectionData!.xy
+        : state.recoRouteCoordinates;
 
-    // stepIndex는 활성 경로의 path.length 기준으로 계산
-    final activeRoute = state.isUsingRecoRoute ? state.recommendedRoute : state.myRoute;
-    final stepRemainingRoute = activeRoute;
     final stepIndex = state.isUsingRecoRoute ? recoStepIdx : myStepIdx;
 
-    // ── 좌표: 각 탭 전용 좌표를 독립적으로 갱신 ─────────────────
+    final activeRoute = state.isUsingRecoRoute ? state.recommendedRoute : state.myRoute;
+
     final newMyCoords = (mySection?.xy.isNotEmpty == true)
         ? mySection!.xy
         : state.routeCoordinates;
 
-    final newRecoCoords = (recoSection?.xy.isNotEmpty == true)
-        ? recoSection!.xy
-        : state.recoRouteCoordinates;
-
-    // ── recommendedRoute: 폴링에서는 갱신하지 않음 ──────────────────
     state = state.copyWith(
-      liveStatus: liveStatus,
       currentStepIndex: stepIndex,
       myStepIndex: myStepIdx,
       recoStepIndex: recoStepIdx,
       stepRemainingMinutes:
-          stepRemainingRoute != null ? _remainingMinutes(stepRemainingRoute, stepIndex) : 0,
+          activeRoute != null ? _remainingMinutes(activeRoute, stepIndex) : 0,
       routeCoordinates: newMyCoords,
       recoRouteCoordinates: newRecoCoords,
       myCurrentSectionData: mySection ?? state.myCurrentSectionData,
-      recoCurrentSectionData: recoSection ?? state.recoCurrentSectionData,
+      // recoCurrentSectionData는 updateRecoSection()이 단독 관리 — _poll()에서 덮어쓰지 않음
     );
 
-    debugPrint('[LivePoll] 완료 — status:${liveStatus.status} '
+    debugPrint('[LivePoll] 완료 — '
         'isReco:${state.isUsingRecoRoute} myStepIdx:$myStepIdx recoStepIdx:$recoStepIdx '
-        'myCoords:${newMyCoords.length}개 recoCoords:${newRecoCoords.length}개');
-
-    if (liveStatus.status == '도착') {
-      _liveTimer?.cancel();
-      _liveTimer = null;
-    }
+        'myCoords:${newMyCoords.length}개 recoCoords:${newRecoCoords.length}개 '
+        'recoSection.idx=${recoSectionData?.idx} recoSection.type=${recoSectionData?.currentType}');
   }
 
   /// 현재 구간 이후 남은 예상 시간(분) 계산
@@ -492,6 +482,29 @@ class HomeNotifier extends StateNotifier<HomeState> {
     }
   }
 
+  /// RecoLiveRouteNotifier의 STOMP section 수신 시 호출.
+  /// recoCurrentSectionData를 즉시 갱신하여 다음 _poll() 사이클에서
+  /// recoStepIdx / recoRouteCoordinates가 올바르게 재계산되도록 한다.
+  void updateRecoSection(CurrentSectionModel section) {
+    if (state.status != HomeStatus.active) return;
+    final recoStepIdx = state.recommendedRoute != null
+        ? _resolvePathIndex(section, state.recommendedRoute!.path.length)
+        : state.recoStepIndex;
+    final newRecoCoords = section.xy.isNotEmpty ? section.xy : state.recoRouteCoordinates;
+    state = state.copyWith(
+      recoCurrentSectionData: section,
+      recoStepIndex: recoStepIdx,
+      recoRouteCoordinates: newRecoCoords,
+      currentStepIndex: state.isUsingRecoRoute ? recoStepIdx : state.currentStepIndex,
+      stepRemainingMinutes: state.isUsingRecoRoute && state.recommendedRoute != null
+          ? _remainingMinutes(state.recommendedRoute!, recoStepIdx)
+          : state.stepRemainingMinutes,
+    );
+    debugPrint('[HomeNotifier] updateRecoSection idx=${section.idx} '
+        'type=${section.currentType} recoStepIdx=$recoStepIdx '
+        'station=${section.currentXY?.stationName} recoCoords=${newRecoCoords.length}개');
+  }
+
   /// 루틴 생성/수정 후 경로 데이터 재조회 (추천 경로 0개 문제 해결)
   /// 루틴 생성/수정 후 데이터 재조회.
   /// silent 모드로 initialize를 호출하여 isLoading 스피너 없이 조용히 갱신.
@@ -541,26 +554,28 @@ class HomeNotifier extends StateNotifier<HomeState> {
         ? _resolvePathIndex(recoSection, freshReco.path.length)
         : 0;
 
+    // isUsingRecoRoute + 경로 데이터를 먼저 세팅
     state = state.copyWith(
       isLoading: false,
       isUsingRecoRoute: true,
-      // 나의 경로(myRoute, myCurrentSectionData, myStepIndex)는 일절 건드리지 않음
       recommendedRoute: freshReco,
       recoCurrentSectionData: recoSection,
       recoRouteCoordinates: recoCoords,
       recoStepIndex: recoStepIdx,
-      // currentStepIndex는 추천 경로 기준으로 설정
       currentStepIndex: recoStepIdx,
       stepRemainingMinutes: freshReco != null
           ? _remainingMinutes(freshReco, recoStepIdx)
           : 0,
-      // active 상태로 전환 (출발이 시작됨)
-      status: HomeStatus.active,
       departureTime: state.departureTime ?? DateTime.now(),
     );
 
-    // 폴링이 아직 시작 안 된 경우(preActive → 바로 추천 경로 변경) 폴링 시작
-    _startPolling();
+    // preActive 상태면 startRoute()를 통해 active로 전환 — 나의 경로 초기화 없이 진입
+    // active 상태면 이미 _ActiveView가 떠 있으므로 status는 건드리지 않고 폴링만 유지
+    if (state.status != HomeStatus.active) {
+      await startRoute();
+    } else {
+      _startPolling();
+    }
   }
 
   @override

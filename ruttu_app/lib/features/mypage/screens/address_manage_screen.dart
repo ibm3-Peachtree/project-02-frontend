@@ -1,23 +1,20 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/kakao_postcode_page.dart';
 import '../../../data/models/address_model.dart';
 import '../../auth/providers/network_provider.dart';
+import '../../routine/providers/routine_provider.dart';
 
-// ── 주소 목록 FutureProvider ───────────────────────────
-final _addressListProvider = FutureProvider.autoDispose<List<AddressModel>>((ref) async {
-  final res = await ref.read(apiClientProvider).dio.get('/address');
-  final list = res.data as List<dynamic>;
-  return list.map((e) => AddressModel.fromJson(e as Map<String, dynamic>)).toList();
-});
+// addressListProvider 제거 — routine_provider.dart의 전역 addressListProvider 사용
 
 class AddressManageScreen extends ConsumerWidget {
   const AddressManageScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final asyncAddresses = ref.watch(_addressListProvider);
+    final asyncAddresses = ref.watch(addressListProvider);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -98,6 +95,9 @@ class AddressManageScreen extends ConsumerWidget {
 
   Future<void> _showAddSheet(
       BuildContext context, WidgetRef ref, AddressModel? editing) async {
+    // BottomSheet 바깥 Scaffold의 messenger를 미리 캡처
+    final rootMessenger = ScaffoldMessenger.of(context);
+
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -105,13 +105,13 @@ class AddressManageScreen extends ConsumerWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) {
-        final currentAddresses = ref.read(_addressListProvider).valueOrNull ?? [];
+        final currentAddresses = ref.read(addressListProvider).valueOrNull ?? [];
         return _AddressFormSheet(
-        editing: editing,
-        existingAddresses: currentAddresses,
-        onSave: (name, roadAddress, jibunAddress) async {
-          final apiClient = ref.read(apiClientProvider);
-          try {
+          editing: editing,
+          existingAddresses: currentAddresses,
+          rootMessenger: rootMessenger,
+          onSave: (name, roadAddress, jibunAddress) async {
+            final apiClient = ref.read(apiClientProvider);
             if (editing != null) {
               await apiClient.dio.put('/address/${editing.addressId}', data: {
                 'name': name,
@@ -125,15 +125,9 @@ class AddressManageScreen extends ConsumerWidget {
                 'jibunAddress': jibunAddress,
               });
             }
-            ref.invalidate(_addressListProvider);
+            ref.invalidate(addressListProvider);
             if (ctx.mounted) Navigator.pop(ctx);
-          } catch (e) {
-            if (ctx.mounted) {
-              ScaffoldMessenger.of(ctx).showSnackBar(
-                  SnackBar(content: Text('저장에 실패했어요: $e')));
-            }
-          }
-        },
+          },
         );
       },
     );
@@ -160,7 +154,7 @@ class AddressManageScreen extends ConsumerWidget {
               Navigator.pop(ctx);
               try {
                 await ref.read(apiClientProvider).dio.delete('/address/${item.addressId}');
-                ref.invalidate(_addressListProvider);
+                ref.invalidate(addressListProvider);
               } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -222,12 +216,14 @@ class _EmptyView extends StatelessWidget {
 class _AddressFormSheet extends StatefulWidget {
   final AddressModel? editing;
   final List<AddressModel> existingAddresses;
+  final ScaffoldMessengerState rootMessenger;
   final Future<void> Function(String name, String roadAddress,
       String jibunAddress) onSave;
 
   const _AddressFormSheet({
     this.editing,
     required this.existingAddresses,
+    required this.rootMessenger,
     required this.onSave,
   });
 
@@ -269,13 +265,46 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
 
   Future<void> _save() async {
     if (_nameCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('장소 이름을 입력해주세요.')));
+      widget.rootMessenger.showSnackBar(
+          const SnackBar(content: Text('장소 이름을 입력해주세요.')));
       return;
     }
     if (!_hasAddress) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('주소를 검색하여 선택해주세요.')));
+      // 주소 검색을 하지 않은 경우 → 다이얼로그로 안내 후 주소 검색 화면 열기
+      final shouldSearch = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text(
+            '주소를 검색해주세요',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          ),
+          content: const Text(
+            '저장하려면 주소 검색이 필요해요.\n주소 검색 후 저장하기를 눌러주세요.',
+            style: TextStyle(fontSize: 14, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text(
+                '취소',
+                style: TextStyle(color: AppColors.textSecondary),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary),
+              child: const Text(
+                '주소 검색하기',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (shouldSearch == true) await _searchAddress();
       return;
     }
 
@@ -299,31 +328,51 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
         a.name == inputName &&
         (widget.editing == null || a.addressId != widget.editing!.addressId));
     if (isDuplicate) {
-      await showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('이름 중복',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-          content: const Text('이미 사용 중인 장소 이름이에요.\n다른 이름을 입력해주세요.',
-              style: TextStyle(fontSize: 14)),
-          actions: [
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx),
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary),
-              child: const Text('확인',
-                  style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
+      widget.rootMessenger.showSnackBar(
+        const SnackBar(content: Text('이미 사용 중인 장소 이름이에요. 다른 이름을 입력해주세요.')),
       );
-      return;
       return;
     }
 
     setState(() => _saving = true);
-    await widget.onSave(inputName, roadAddress, jibunAddress);
+    try {
+      await widget.onSave(inputName, roadAddress, jibunAddress);
+    } on DioException catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      final statusCode = e.response?.statusCode;
+      if (statusCode == 409) {
+        // 백엔드 409 응답의 detail 필드로 원인을 구분
+        // - 'Redis JSON 파싱 실패': 서버 내부 오류 → 재시도 안내
+        // - 그 외(루틴에 주소 존재): 실제 루틴 사용 중
+        final detail = e.response?.data is Map
+            ? (e.response!.data as Map)['detail'] as String? ?? ''
+            : '';
+        final isServerBug = detail.contains('Redis') || detail.contains('파싱');
+        if (isServerBug) {
+          widget.rootMessenger.showSnackBar(
+            const SnackBar(content: Text('서버 오류가 발생했어요. 잠시 후 다시 시도해 주세요.')),
+          );
+        } else {
+          if (mounted) Navigator.pop(context);
+          widget.rootMessenger.showSnackBar(
+            const SnackBar(
+              content: Text('이미 루틴에서 사용 중이어서 변경이 불가합니다.'),
+            ),
+          );
+        }
+      } else {
+        widget.rootMessenger.showSnackBar(
+            const SnackBar(content: Text('저장에 실패했어요. 잠시 후 다시 시도해 주세요.')));
+      }
+      return;
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      widget.rootMessenger.showSnackBar(
+          const SnackBar(content: Text('저장에 실패했어요. 잠시 후 다시 시도해 주세요.')));
+      return;
+    }
     if (mounted) setState(() => _saving = false);
   }
 

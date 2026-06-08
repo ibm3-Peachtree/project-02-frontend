@@ -89,33 +89,25 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
 
     // 모든 API를 한 번에 병렬 호출 — 순차 대기 제거로 로딩 시간 단축
     await Future.wait([
-      _repository.getWeatherAirQuality()
-          .then((v) => weather = v)
-          .catchError((_) {}),
-      _repository.getTodayIssues()
-          .then((v) => issues = v)
-          .catchError((_) {}),
-      _repository.getMeetingRoute()
-          .then((v) => meetingRoute = v)
-          .catchError((_) {}),
+      () async { try { weather = await _repository.getWeatherAirQuality(); } catch (_) {} }(),
+      () async { try { issues = await _repository.getTodayIssues(); } catch (_) {} }(),
+      () async { try { meetingRoute = await _repository.getMeetingRoute(); } catch (_) {} }(),
       if (_userId != null)
-        _repository.getAiSummary(_userId!)
-            .then((v) => aiSummary = v)
-            .catchError((_) {}),
-      _repository.getBriefingWeather()
-          .then((v) => briefingWeather = v)
-          .catchError((_) {}),
-      _repository.getBriefingCalendar()
-          .then((v) {
-            calendarGroups = v;
-            debugPrint('[BriefingCalendar] success: ${v.length} groups, '
-                '${v.expand((g) => g.items).length} events');
-          })
-          .catchError((e, st) {
-            calendarError = e.toString();
-            debugPrint('[BriefingCalendar] ERROR: $e');
-            debugPrint('[BriefingCalendar] STACK: $st');
-          }),
+        () async { try { aiSummary = await _repository.getAiSummary(_userId!); } catch (_) {} }(),
+      () async { try { briefingWeather = await _repository.getBriefingWeather(); } catch (_) {} }(),
+      () async {
+        try {
+          final v = await _repository.getBriefingCalendar();
+          calendarGroups = v;
+          debugPrint('[BriefingCalendar] success: ${v.length} groups, '
+              '${v.expand((g) => g.items).length} events');
+        } catch (e, st) {
+          // 사용자에게는 간결한 메시지만 표시 (DioException 전체 노출 방지)
+          calendarError = '일정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.';
+          debugPrint('[BriefingCalendar] ERROR: $e');
+          debugPrint('[BriefingCalendar] STACK: $st');
+        }
+      }(),
     ]);
 
     state = BriefingState(

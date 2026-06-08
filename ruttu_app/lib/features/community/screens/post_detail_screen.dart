@@ -15,8 +15,6 @@ class PostDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
-  final _commentController = TextEditingController();
-
   @override
   void initState() {
     super.initState();
@@ -25,13 +23,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
     });
   }
 
-  @override
-  void dispose() {
-    _commentController.dispose();
-    super.dispose();
-  }
-
-  void _showReportSheet({int? commentId}) {
+  void _showReportSheet() {
     const reasons = ['욕설·비방', '스팸·광고', '허위정보', '기타'];
     showModalBottomSheet(
       context: context,
@@ -52,24 +44,15 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                   title: Text(r, style: const TextStyle(fontSize: 15)),
                   onTap: () {
                     Navigator.pop(ctx);
-                    _submitReport(r, commentId: commentId);
+                    ref.read(postDetailProvider(widget.postId).notifier).reportPost(r);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('신고가 접수되었어요.')),
+                    );
                   },
                 )),
           ],
         ),
       ),
-    );
-  }
-
-  void _submitReport(String reason, {int? commentId}) {
-    final notifier = ref.read(postDetailProvider(widget.postId).notifier);
-    if (commentId != null) {
-      notifier.reportComment(commentId, reason);
-    } else {
-      notifier.reportPost(reason);
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('신고가 접수되었어요.')),
     );
   }
 
@@ -141,13 +124,6 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
         ],
       ),
     );
-  }
-
-  Future<void> _sendComment() async {
-    final text = _commentController.text.trim();
-    if (text.isEmpty) return;
-    _commentController.clear();
-    await ref.read(postDetailProvider(widget.postId).notifier).sendComment(text);
   }
 
   Color _routeColor(String route) {
@@ -222,7 +198,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                           // 메타: 이슈타입 · 시간 · 조회수
                           Row(
                             children: [
-                              _MetaChip(label: state.post!.issueType),
+                              _MetaChip(label: state.post!.issueTypeLabel),
                               const SizedBox(width: 8),
                               Text(state.post!.timeAgo,
                                   style: const TextStyle(
@@ -247,56 +223,8 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                               style: const TextStyle(
                                   fontSize: 15, height: 1.7)),
                           const SizedBox(height: 24),
-
-                          // 댓글 헤더
-                          Row(
-                            children: [
-                              const Icon(Icons.chat_bubble_outline,
-                                  size: 16, color: AppColors.textSecondary),
-                              const SizedBox(width: 6),
-                              Text(
-                                '댓글 ${state.comments.length}',
-                                style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.textSecondary),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-
-                          // 댓글 목록
-                          if (state.comments.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 20),
-                              child: Center(
-                                child: Text('첫 댓글을 남겨보세요!',
-                                    style: TextStyle(
-                                        fontSize: 14,
-                                        color: AppColors.textSecondary)),
-                              ),
-                            )
-                          else
-                            ...state.comments.map((c) => _CommentItem(
-                                  comment: c,
-                                  onReport: () =>
-                                      _showReportSheet(commentId: c.commentId),
-                                  onDelete: () async {
-                                    await ref
-                                        .read(postDetailProvider(widget.postId)
-                                            .notifier)
-                                        .deleteComment(c.commentId);
-                                  },
-                                )),
                         ],
                       ),
-                    ),
-
-                    // 하단 댓글 입력창
-                    _CommentInputBar(
-                      controller: _commentController,
-                      isSending: state.isSending,
-                      onSend: _sendComment,
                     ),
                   ],
                 ),
@@ -331,118 +259,3 @@ class _MetaChip extends StatelessWidget {
       );
 }
 
-// ── 댓글 아이템 ──────────────────────────────────────
-class _CommentItem extends StatelessWidget {
-  final CommentModel comment;
-  final VoidCallback onReport;
-  final VoidCallback onDelete;
-
-  const _CommentItem({
-    required this.comment,
-    required this.onReport,
-    required this.onDelete,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onLongPress: onReport,
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            CircleAvatar(
-              radius: 16,
-              backgroundColor: AppColors.primary.withValues(alpha: 0.15),
-              child: const Icon(Icons.person_outline,
-                  size: 18, color: AppColors.primary),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Text('익명',
-                          style: TextStyle(
-                              fontSize: 13, fontWeight: FontWeight.w600)),
-                      const SizedBox(width: 8),
-                      Text(comment.timeAgo,
-                          style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textSecondary)),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(comment.content,
-                      style: const TextStyle(fontSize: 14, height: 1.5)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── 댓글 입력 바 ─────────────────────────────────────
-class _CommentInputBar extends StatelessWidget {
-  final TextEditingController controller;
-  final bool isSending;
-  final VoidCallback onSend;
-
-  const _CommentInputBar({
-    required this.controller,
-    required this.isSending,
-    required this.onSend,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppColors.border)),
-      ),
-      padding: EdgeInsets.fromLTRB(
-          16, 8, 8,
-          MediaQuery.of(context).viewInsets.bottom +
-              MediaQuery.of(context).padding.bottom +
-              8),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                hintText: '댓글을 입력하세요...',
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(vertical: 8),
-              ),
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => onSend(),
-              maxLines: null,
-            ),
-          ),
-          isSending
-              ? const SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: Padding(
-                    padding: EdgeInsets.all(8),
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              : IconButton(
-                  icon: const Icon(Icons.send_rounded, color: AppColors.primary),
-                  onPressed: onSend,
-                ),
-        ],
-      ),
-    );
-  }
-}

@@ -57,6 +57,8 @@ class _CommunityScreenState extends ConsumerState<CommunityScreen> {
                     delegate: _FilterHeaderDelegate(
                       sortType: feed.sortType,
                       routeFilter: feed.routeFilter,
+                      // 전체 posts(필터 전)에서 lineNumber 추출 → 동적 칩
+                      routes: feed.allRoutes,
                       onSortChanged: (s) =>
                           ref.read(feedProvider.notifier).setSort(s),
                       onRouteChanged: (r) =>
@@ -165,17 +167,17 @@ class _HotPostBanner extends StatelessWidget {
 class _FilterHeaderDelegate extends SliverPersistentHeaderDelegate {
   final String sortType;
   final String? routeFilter;
+  final List<String> routes;
   final void Function(String) onSortChanged;
   final void Function(String?) onRouteChanged;
 
   const _FilterHeaderDelegate({
     required this.sortType,
     required this.routeFilter,
+    required this.routes,
     required this.onSortChanged,
     required this.onRouteChanged,
   });
-
-  static const _routes = ['2호선', '신분당선', '147번', '강남역'];
 
   @override
   Widget build(
@@ -208,7 +210,7 @@ class _FilterHeaderDelegate extends SliverPersistentHeaderDelegate {
               selected: routeFilter == null,
               onTap: () => onRouteChanged(null),
             ),
-            ..._routes.map((r) => Padding(
+            ...routes.map((r) => Padding(
                   padding: const EdgeInsets.only(left: 6),
                   child: _SmallChip(
                     label: r,
@@ -229,7 +231,8 @@ class _FilterHeaderDelegate extends SliverPersistentHeaderDelegate {
   double get minExtent => 52;
   @override
   bool shouldRebuild(_FilterHeaderDelegate old) =>
-      old.sortType != sortType || old.routeFilter != routeFilter;
+      old.sortType != sortType || old.routeFilter != routeFilter ||
+      old.routes.length != routes.length;
 }
 
 class _SmallChip extends StatelessWidget {

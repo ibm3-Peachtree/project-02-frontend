@@ -18,9 +18,12 @@ import '../providers/home_provider.dart';
 import '../providers/home_state.dart';
 import '../providers/live_location_provider.dart'
     show liveLocationProvider; // ✅ liveLocationProvider만 선택 import
+import '../providers/live_route_provider.dart' show liveStatusProvider;
+import '../../../data/services/stomp_service.dart';
 import '../../routine/providers/routine_provider.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
 import '../../../core/widgets/live_route_tabs.dart';
+import '../providers/live_route_provider.dart' show incidentDetourProvider, recoRouteProvider;
 import 'mock_briefing_screen.dart';
 import 'mock_community_screen.dart';
 import 'mock_report_screen.dart';
@@ -38,6 +41,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // STOMP 연결 — 구독 등록보다 먼저 연결되어야 incident/detour 수신 가능
+      StompService.instance.connect();
+      // incidentDetourProvider를 앱 시작 시점에 미리 생성:
+      // 탭을 누르기 전에도 STOMP /user/queue/incident·detour 구독이 시작되도록 보장.
+      // (탭 진입 시 처음 read하면 /reco GET 응답 이후 push가 이미 도착해도 놓칠 수 있음)
+      ref.read(incidentDetourProvider);
+      // recoRouteProvider도 미리 생성 — incidentDetourProvider listener 등록 보장
+      ref.read(recoRouteProvider);
       ref.read(homeProvider.notifier).initialize();
     });
   }
@@ -422,41 +433,7 @@ class _NoTodayRoutineView extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _QuickMenuCard(
-                          icon: Icons.add_circle_outline_rounded,
-                          label: '루틴 추가',
-                          color: AppColors.primary,
-                          onTap: () => context.go(RouteConstants.routine),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _QuickMenuCard(
-                          icon: Icons.wb_sunny_outlined,
-                          label: 'AI 브리핑',
-                          color: AppColors.secondary,
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(builder: (_) => const MockBriefingScreen()),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _QuickMenuCard(
-                          icon: Icons.people_outline_rounded,
-                          label: '커뮤니티',
-                          color: const Color(0xFF6366F1),
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(builder: (_) => const MockCommunityScreen()),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+
                 ],
               ),
             ),
@@ -2007,74 +1984,43 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
             },
           ),
           // 줌 컨트롤 버튼
-          Positioned(
-            right: 12,
-            bottom: 220,
-            child: Column(
-              children: [
-                _MapZoomButton(
-                  icon: Icons.add,
-                  onTap: () async {
-                    if (_mapController == null) return;
-                    final zoom = await _mapController!.getCameraPosition();
-                    await _mapController!.updateCamera(NCameraUpdate.zoomIn());
-                  },
+          Builder(
+            builder: (context) {
+              final screenH = MediaQuery.of(context).size.height;
+              final minPanelH = screenH * 0.35 + 16;
+              return Positioned(
+                right: 12,
+                bottom: minPanelH,
+                child: Column(
+                  children: [
+                    _MapZoomButton(
+                      icon: Icons.add,
+                      onTap: () async {
+                        if (_mapController == null) return;
+                        await _mapController!.updateCamera(NCameraUpdate.zoomIn());
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    _MapZoomButton(
+                      icon: Icons.remove,
+                      onTap: () async {
+                        if (_mapController == null) return;
+                        await _mapController!.updateCamera(NCameraUpdate.zoomOut());
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    _MapZoomButton(
+                      icon: Icons.my_location,
+                      onTap: () {
+                        if (_mapController != null) {
+                          _moveToCurrentLocation(_mapController!);
+                        }
+                      },
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 6),
-                _MapZoomButton(
-                  icon: Icons.remove,
-                  onTap: () async {
-                    if (_mapController == null) return;
-                    final zoom = await _mapController!.getCameraPosition();
-                    await _mapController!.updateCamera(NCameraUpdate.zoomOut());
-                  },
-                ),
-                const SizedBox(height: 6),
-                _MapZoomButton(
-                  icon: Icons.my_location,
-                  onTap: () {
-                    if (_mapController != null) {
-                      _moveToCurrentLocation(_mapController!);
-                    }
-                  },
-                ),
-              ],
-            ),
-          ),
-          // 줌 컨트롤 버튼
-          Positioned(
-            right: 12,
-            bottom: 220,
-            child: Column(
-              children: [
-                _MapZoomButton(
-                  icon: Icons.add,
-                  onTap: () async {
-                    if (_mapController == null) return;
-                    final zoom = await _mapController!.getCameraPosition();
-                    await _mapController!.updateCamera(NCameraUpdate.zoomIn());
-                  },
-                ),
-                const SizedBox(height: 6),
-                _MapZoomButton(
-                  icon: Icons.remove,
-                  onTap: () async {
-                    if (_mapController == null) return;
-                    final zoom = await _mapController!.getCameraPosition();
-                    await _mapController!.updateCamera(NCameraUpdate.zoomOut());
-                  },
-                ),
-                const SizedBox(height: 6),
-                _MapZoomButton(
-                  icon: Icons.my_location,
-                  onTap: () {
-                    if (_mapController != null) {
-                      _moveToCurrentLocation(_mapController!);
-                    }
-                  },
-                ),
-              ],
-            ),
+              );
+            },
           ),
           SafeArea(
             child: Padding(
@@ -2153,7 +2099,12 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                         // ── 추천 경로 탭 ──────────────────────────────────
                         // RecoRouteTabContent: recoRouteProvider 기반으로
                         // 카드 목록 선택 → 실시간 구간 안내(이미지2)까지 모두 처리
-                        RecoRouteTabContent(scrollController: scrollController),
+                        RecoRouteTabContent(
+                          scrollController: scrollController,
+                          // "현재 경로 유지" 버튼: Navigator.pop() 대신 탭 전환
+                          // (DraggableScrollableSheet 내 TabBarView에 있으므로 pop하면 홈이 사라짐)
+                          onKeep: () => _tabController.animateTo(0),
+                        ),
                       ],
                     ),
                   ),
@@ -2167,9 +2118,6 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
   }
 }
 
-// ───────────────────────────────────────────────
-// 2-C: 경로 진행 중
-// ───────────────────────────────────────────────
 class _ActiveView extends ConsumerStatefulWidget {
   final void Function(RoutineModel? routine) onStopTap;
   const _ActiveView({required this.onStopTap});
@@ -2186,10 +2134,12 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
   Position? _currentGpsPosition;
   bool _routeDrawn = false; // ✅ 경로 폴리라인이 그려졌는지 추적
 
-  /// routeCoordinates 중 현재 구간(idx) 이후 첫 번째 유효 좌표를 초기 카메라 위치로 반환.
+  /// 활성 경로 좌표 중 현재 구간(idx) 이후 첫 번째 유효 좌표를 초기 카메라 위치로 반환.
   /// 없으면 null → 현재 위치로 이동.
   NCameraPosition? _initialCameraPosition() {
-    final coords = ref.read(homeProvider).routeCoordinates;
+    final home = ref.read(homeProvider);
+    final isReco = home.isUsingRecoRoute;
+    final coords = isReco ? home.recoRouteCoordinates : home.routeCoordinates;
     final idx = ref.read(homeProvider).currentStepIndex;
     // 현재 구간부터 탐색, 없으면 전체에서 탐색
     final searchList = idx < coords.length ? coords.skip(idx) : coords;
@@ -2235,7 +2185,11 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     try {
       // 경로가 아직 안 그려진 경우 전체 재드로우 (GPS 이벤트가 onMapReady보다 늦을 수 있음)
       if (!_routeDrawn) {
-        await _drawRouteOnMap(controller, ref.read(homeProvider).routeCoordinates);
+        final home = ref.read(homeProvider);
+        final activeCoords = home.isUsingRecoRoute
+            ? home.recoRouteCoordinates
+            : home.routeCoordinates;
+        await _drawRouteOnMap(controller, activeCoords);
         return; // _drawRouteOnMap 내부에서 GPS 마커 + 카메라도 처리
       }
 
@@ -2541,7 +2495,7 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                             route: route,
                             currentStepIndex: home.myStepIndex,
                             liveStatusText:
-                                home.liveStatus?.status ?? '도보 중',
+                                ref.watch(liveStatusProvider)?.status ?? '대기중',
                             stepRemainingMinutes: home.myStepRemainingMinutes,
                             stopsRemaining: home.myStopsRemaining,
                             currentStationName: home.myCurrentStationName,
@@ -2554,7 +2508,11 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                         // ── 추천 경로 탭 ──────────────────────────────────
                         // RecoRouteTabContent: recoRouteProvider 기반으로
                         // 카드 목록 선택 → 실시간 구간 안내(이미지2)까지 모두 처리
-                        RecoRouteTabContent(scrollController: scrollController),
+                        RecoRouteTabContent(
+                          scrollController: scrollController,
+                          // "현재 경로 유지" 버튼: Navigator.pop() 대신 탭 전환
+                          onKeep: () => _tabController.animateTo(0),
+                        ),
                       ],
                     ),
                   ),
@@ -3372,13 +3330,11 @@ class _RecoRouteListPanelState extends ConsumerState<_RecoRouteListPanel> {
   int? _selectedRecoId;
 
   Future<void> _showDetail(RouteModel summary) async {
-    RouteModel detail = summary;
-    try {
-      detail = await ref
-          .read(homeRepositoryProvider)
-          .getRecoRouteDetail(summary.recoId);
-    } catch (_) {}
+    // recoRouteProvider를 통해 상세 조회 (homeRepositoryProvider 직접 참조 불필요)
+    await ref.read(recoRouteProvider.notifier).loadRecoDetail(summary.recoId);
     if (!mounted) return;
+    final detail = ref.read(recoRouteProvider).detailRoute ?? summary;
+
     final selected = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -3398,6 +3354,7 @@ class _RecoRouteListPanelState extends ConsumerState<_RecoRouteListPanel> {
         ),
       ),
     );
+    ref.read(recoRouteProvider.notifier).closeDetail();
     if (selected == true && mounted) {
       setState(() => _selectedRecoId = summary.recoId);
       widget.onSwitch(summary.recoId);
@@ -3434,7 +3391,7 @@ class _RecoRouteListPanelState extends ConsumerState<_RecoRouteListPanel> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      widget.incidentMessage ?? '돌발 사고 발생 — 현재 경로 영향',
+                      widget.incidentMessage ?? '돌발 사고 발생',
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,

@@ -19,25 +19,12 @@ class _MyCommunityActivityScreenState
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // Mock: my posts (postIds 1, 2)
-  static const _myPostIds = [1, 2];
-  // Mock: my comments
-  static const _myComments = [
-    _MyComment(
-      commentId: 1,
-      content: '저도 지금 막혀서 버스로 갈아탔어요.',
-      postTitle: '2호선 강남역 오늘 심하게 지연되네요',
-      postId: 1,
-      createdAt: '2026-05-19T08:52:00',
-    ),
-  ];
-
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 1, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(feedProvider.notifier).load();
+      ref.read(feedProvider.notifier).loadMyPosts();
     });
   }
 
@@ -50,9 +37,8 @@ class _MyCommunityActivityScreenState
   @override
   Widget build(BuildContext context) {
     final feed = ref.watch(feedProvider);
-    final myPosts = feed.posts
-        .where((p) => _myPostIds.contains(p.postId))
-        .toList();
+    final myPosts = feed.myPosts;
+    final isLoading = feed.isMyPostsLoading;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -67,14 +53,19 @@ class _MyCommunityActivityScreenState
           unselectedLabelColor: AppColors.textSecondary,
           labelStyle:
               const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-          tabs: const [Tab(text: '내가 쓴 글'), Tab(text: '내가 쓴 댓글')],
+          tabs: const [Tab(text: '내가 쓴 글')],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
         children: [
-          _PostsTab(posts: myPosts),
-          const _CommentsTab(comments: _myComments),
+          isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : RefreshIndicator(
+                  onRefresh: () =>
+                      ref.read(feedProvider.notifier).loadMyPosts(),
+                  child: _PostsTab(posts: myPosts),
+                ),
         ],
       ),
     );
@@ -196,134 +187,4 @@ class _PostsTab extends StatelessWidget {
       ),
     );
   }
-}
-
-// ── 내가 쓴 댓글 탭 ─────────────────────────────────
-class _CommentsTab extends StatelessWidget {
-  final List<_MyComment> comments;
-  const _CommentsTab({required this.comments});
-
-  @override
-  Widget build(BuildContext context) {
-    if (comments.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.chat_bubble_outline, size: 56, color: AppColors.border),
-            SizedBox(height: 16),
-            Text('아직 작성한 댓글이 없어요',
-                style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textSecondary)),
-          ],
-        ),
-      );
-    }
-
-    return ListView(
-      padding: EdgeInsets.fromLTRB(16, 12, 16, 32 + MediaQuery.of(context).padding.bottom),
-      children: [
-        Text('총 ${comments.length}개',
-            style: const TextStyle(
-                fontSize: 13, color: AppColors.textSecondary)),
-        const SizedBox(height: 8),
-        ...comments.map((c) {
-          final dt = DateTime.tryParse(c.createdAt);
-          final dateLabel = dt != null
-              ? '${dt.year}.${dt.month.toString().padLeft(2, '0')}.${dt.day.toString().padLeft(2, '0')}'
-              : '';
-          return Card(
-            margin: const EdgeInsets.only(bottom: 10),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  GestureDetector(
-                    onTap: () => context.push(
-                      RouteConstants.postDetail
-                          .replaceFirst(':id', '${c.postId}'),
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: AppColors.background,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        children: [
-                          const Text('↳ ',
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  color: AppColors.textSecondary,
-                                  fontStyle: FontStyle.italic)),
-                          Expanded(
-                            child: Text(c.postTitle,
-                                style: const TextStyle(
-                                    fontSize: 13,
-                                    color: AppColors.textSecondary,
-                                    fontStyle: FontStyle.italic),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                          const Icon(Icons.chevron_right,
-                              size: 16,
-                              color: AppColors.textSecondary),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(c.content,
-                      style: const TextStyle(fontSize: 14),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Text(dateLabel,
-                          style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textSecondary)),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: () {},
-                        style: TextButton.styleFrom(
-                            foregroundColor: AppColors.error,
-                            minimumSize: Size.zero,
-                            padding: EdgeInsets.zero,
-                            tapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap),
-                        child: const Text('삭제',
-                            style: TextStyle(fontSize: 12)),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          );
-        }),
-      ],
-    );
-  }
-}
-
-class _MyComment {
-  final int commentId;
-  final String content;
-  final String postTitle;
-  final int postId;
-  final String createdAt;
-
-  const _MyComment({
-    required this.commentId,
-    required this.content,
-    required this.postTitle,
-    required this.postId,
-    required this.createdAt,
-  });
 }

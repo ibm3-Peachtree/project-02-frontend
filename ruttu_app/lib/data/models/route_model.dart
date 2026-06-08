@@ -517,3 +517,108 @@ class IssueModel {
         isFullClosure: json['isFullClosure'] as bool,
       );
 }
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// DetourModel  — STOMP /user/queue/detour push 수신용
+// 서버 DetourDto 구조:
+//   { path_id, total_duration_min, transfer_count,
+//     path_segments: [{ type, display_name, segment_duration_min,
+//                       total_distance_m, stop_count,
+//                       stations: [{ name, x, y, ars_id }] }] }
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class DetourStationModel {
+  final String name;
+  final double x;   // 경도
+  final double y;   // 위도
+  final String? arsId;
+
+  const DetourStationModel({
+    required this.name,
+    required this.x,
+    required this.y,
+    this.arsId,
+  });
+
+  factory DetourStationModel.fromJson(Map<String, dynamic> json) =>
+      DetourStationModel(
+        name:  json['name']   as String,
+        x:     (json['x']     as num).toDouble(),
+        y:     (json['y']     as num).toDouble(),
+        arsId: json['ars_id'] as String?,
+      );
+}
+
+class DetourSegmentModel {
+  final String type;                    // 서버 원본: "TRANSIT" | "TRANSFER"
+  final List<String> displayName;       // 노선명 or 역명 목록
+  final double segmentDurationMin;
+  final int totalDistanceM;
+  final int stopCount;
+  final List<DetourStationModel> stations;
+
+  const DetourSegmentModel({
+    required this.type,
+    required this.displayName,
+    required this.segmentDurationMin,
+    required this.totalDistanceM,
+    required this.stopCount,
+    required this.stations,
+  });
+
+  /// "TRANSFER" = 도보 환승 구간, "TRANSIT" = 버스/지하철 탑승 구간
+  bool get isWalk => type == 'TRANSFER' || type == 'walk';
+  bool get isTransit => type == 'TRANSIT' || type == 'bus' || type == 'subway';
+
+  /// display_name 첫 번째 값으로 지하철 여부 판단
+  bool get isSubway {
+    if (!isTransit) return false;
+    final name = displayName.isNotEmpty ? displayName.first : '';
+    return name.contains('지하철') ||
+        name.contains('호선') ||
+        name.contains('전철') ||
+        type == 'subway';
+  }
+
+  bool get isBus => isTransit && !isSubway;
+
+  /// 카드/칩에 표시할 대표 이름
+  String get label => displayName.isNotEmpty ? displayName.first : '';
+
+  factory DetourSegmentModel.fromJson(Map<String, dynamic> json) =>
+      DetourSegmentModel(
+        type:                json['type']                 as String,
+        displayName:         (json['display_name'] as List<dynamic>)
+                                 .map((e) => e as String).toList(),
+        segmentDurationMin:  (json['segment_duration_min'] as num).toDouble(),
+        totalDistanceM:      (json['total_distance_m']      as num).toInt(),
+        stopCount:           (json['stop_count']            as num).toInt(),
+        stations:            (json['stations'] as List<dynamic>)
+                                 .map((e) => DetourStationModel.fromJson(
+                                     e as Map<String, dynamic>))
+                                 .toList(),
+      );
+}
+
+class DetourModel {
+  final int pathId;
+  final double totalDurationMin;
+  final int transferCount;
+  final List<DetourSegmentModel> pathSegments;
+
+  const DetourModel({
+    required this.pathId,
+    required this.totalDurationMin,
+    required this.transferCount,
+    required this.pathSegments,
+  });
+
+  factory DetourModel.fromJson(Map<String, dynamic> json) => DetourModel(
+        pathId:           (json['path_id']           as num).toInt(),
+        totalDurationMin: (json['total_duration_min'] as num).toDouble(),
+        transferCount:    (json['transfer_count']     as num).toInt(),
+        pathSegments:     (json['path_segments'] as List<dynamic>)
+                              .map((e) => DetourSegmentModel.fromJson(
+                                  e as Map<String, dynamic>))
+                              .toList(),
+      );
+}

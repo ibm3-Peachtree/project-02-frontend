@@ -4,38 +4,88 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../../../data/models/address_model.dart';
+import '../../../data/repositories/address_repository.dart';
 import '../../../data/services/location_service.dart';
-import 'address_provider.dart';
+import '../../../data/services/stomp_service.dart';
+import '../../auth/providers/network_provider.dart';
 import 'home_provider.dart';
 import 'home_state.dart';
 
-const double _arrivalRadiusMeters = 80.0;
+// ── 상수 ─────────────────────────────────────────────────────────────
+const double _arrivalRadiusMeters   = 80.0;
 const double _departureRadiusMeters = 100.0;
 
-AddressModel? _findAddressByName(List<AddressModel> list, String name) {
-  try {
-    return list.firstWhere((a) => a.name == name);
-  } catch (_) {
-    return null;
-  }
-}
+// ── STOMP 전송 목적지 ─────────────────────────────────────────────────
+//   LiveLocationController:
+//     @MessageMapping("/location/my")   → 실제 destination: /app/location/my
+//     @MessageMapping("/location/reco") → 실제 destination: /app/location/reco
+const _stompDestMy   = '/app/location/my';
+const _stompDestReco = '/app/location/reco';
 
-// GPS 켜짐 여부를 외부에서 볼 수 있는 상태 Provider
+// ── GPS 켜짐 여부 (외부 노출) ─────────────────────────────────────────
 final gpsActiveProvider = StateProvider<bool>((ref) => false);
 
+// ── liveLocationProvider ──────────────────────────────────────────────
+//
+//  [변경] HTTP PATCH /me/routines/active → STOMP /app/my | /app/reco
+//
+//  서버 처리 흐름:
+//    앱 → STOMP /app/my|reco
+//      → LiveLocationController.myLocation|recoLocation()
+//        ① sendRouteProgress()      → push /user/queue/status
+//        ② getMyCurrentSection()    → push /user/queue/location/my
+//           또는 getRecoCurrentSection() → push /user/queue/location/reco
+//        ③ updateLocation()         → Redis 저장
+//
+//  ② push 수신은 live_route_provider / reco_live_route_provider 에서 처리.
+// ─────────────────────────────────────────────────────────────────────
 final liveLocationProvider = Provider<void>((ref) {
   ref.keepAlive();
   final locationService = LocationService();
+  final stomp = StompService.instance;
 
   StreamSubscription<Position>? sub;
-  List<AddressModel>? cachedAddresses;
+  // alias → AddressModel 캐시 (getAddressByName 결과를 재사용)
+  final Map<String, AddressModel?> addrCache = {};
   Timer? scheduleTimer;
 
-  Future<List<AddressModel>> getAddresses() async {
-    if (cachedAddresses != null) return cachedAddresses!;
-    final addressRepo = ref.read(addressRepositoryProvider);
-    cachedAddresses = await addressRepo.getAddresses();
-    return cachedAddresses!;
+  final addressRepo = ApiAddressRepository(ref.read(apiClientProvider));
+
+  Future<AddressModel?> getAddressByAlias(String alias) async {
+    if (addrCache.containsKey(alias)) return addrCache[alias];
+    try {
+      final addr = await addressRepo.getAddressByName(alias);
+      addrCache[alias] = addr;
+      return addr;
+    } catch (_) {
+      addrCache[alias] = null; // 조회 실패 시 null 캐시 (무한 재시도 방지)
+      return null;
+    }
+  }
+
+  void ensureStompConnected() {
+    if (!stomp.isConnected) stomp.connect();
+  }
+
+  // ── STOMP 위치 전송 ─────────────────────────────────────────────
+  void sendLocation({
+    required double latitude,
+    required double longitude,
+    required double speed,
+    required double accuracy,
+    required bool isReco,
+  }) {
+    stomp.send(
+      destination: isReco ? _stompDestReco : _stompDestMy,
+      body: {
+        'latitude':  latitude,
+        'longitude': longitude,
+        'speed':     speed,
+        'accuracy':  accuracy,
+      },
+    );
+    debugPrint('[LiveLocation] STOMP → ${isReco ? _stompDestReco : _stompDestMy}'
+        '  lat=$latitude  lng=$longitude');
   }
 
   void stopGps() {
@@ -47,64 +97,64 @@ final liveLocationProvider = Provider<void>((ref) {
   }
 
   void startGps() {
-    if (sub != null) return; // 이미 실행 중
+    if (sub != null) return;
+
+    ensureStompConnected();
 
     locationService.ensurePermission().then((_) {
       sub = locationService.getLocationStream().listen(
         (position) async {
           try {
-            if (!(ref.read(gpsActiveProvider))) {
+            if (!ref.read(gpsActiveProvider)) {
               ref.read(gpsActiveProvider.notifier).state = true;
             }
           } catch (_) {}
 
           final homeState = ref.read(homeProvider);
-          final routine = homeState.activeRoutine;
+          final routine   = homeState.activeRoutine;
           if (routine == null) return;
 
           final safeSpeed = position.speed < 0 ? 0.0 : position.speed;
 
-          try {
-            await ref.read(homeRepositoryProvider).sendLiveLocation(
-                  latitude: position.latitude,
-                  longitude: position.longitude,
-                  speed: safeSpeed,
-                  accuracy: position.accuracy,
-                );
-          } catch (e) {
-            debugPrint('[LiveLocation] 전송 실패: $e');
-          }
+          // liveLocationProvider는 항상 /app/location/my 만 전송.
+          // /app/location/reco 전송은 recoLiveRouteProvider의 GPS 스트림이 단독 담당.
+          // (RecoLiveRouteScreen 진입 시 _startGps()가 활성화됨)
+          sendLocation(
+            latitude:  position.latitude,
+            longitude: position.longitude,
+            speed:     safeSpeed,
+            accuracy:  position.accuracy,
+            isReco:    false,
+          );
 
-          final addresses = await getAddresses();
-
-          // 출발지 이탈 감지 → active 전환 (preActive 상태일 때만)
+          // 출발지 이탈 감지 → active 전환
           if (homeState.status == HomeStatus.preActive) {
-            final dep = _findAddressByName(addresses, routine.departureAddressName);
+            final dep = await getAddressByAlias(routine.departureAddressName);
             if (dep?.latitude != null && dep?.longitude != null) {
               final dist = Geolocator.distanceBetween(
                 position.latitude, position.longitude,
                 dep!.latitude!, dep.longitude!,
               );
               if (dist > _departureRadiusMeters) {
-                debugPrint('[LiveLocation] 출발지 이탈 (${dist.toStringAsFixed(0)}m) → 경로 자동 시작');
+                debugPrint('[LiveLocation] 출발지 이탈 ${dist.toStringAsFixed(0)}m → 자동 시작');
                 await ref.read(homeProvider.notifier).startRoute();
                 return;
               }
             }
           }
 
-          // 목적지 도달 체크 (active 상태일 때만)
+          // 목적지 도달 체크
           if (homeState.status == HomeStatus.active) {
-            final arr = _findAddressByName(addresses, routine.arrivalAddressName);
+            final arr = await getAddressByAlias(routine.arrivalAddressName);
             if (arr?.latitude != null && arr?.longitude != null) {
               final dist = Geolocator.distanceBetween(
                 position.latitude, position.longitude,
                 arr!.latitude!, arr.longitude!,
               );
               if (dist <= _arrivalRadiusMeters) {
-                debugPrint('[LiveLocation] 목적지 도달 (${dist.toStringAsFixed(0)}m) → 자동 종료');
+                debugPrint('[LiveLocation] 목적지 도달 ${dist.toStringAsFixed(0)}m → 자동 종료');
                 ref.read(homeProvider.notifier).arriveByGps();
-                stopGps(); // ← 도착 시 GPS 종료
+                stopGps();
               }
             }
           }
@@ -120,40 +170,65 @@ final liveLocationProvider = Provider<void>((ref) {
     });
   }
 
-  // ─── homeProvider 상태 변화 감지 → GPS 자동 제어 ───────────────
+  // ── homeProvider 상태 변화 감지 ─────────────────────────────────
   ref.listen<HomeState>(homeProvider, (prev, next) {
-    // 1. 사용자가 "시작" 버튼을 누름 → active 전환 → GPS 켜기
     if (prev?.status != HomeStatus.active && next.status == HomeStatus.active) {
-      debugPrint('[LiveLocation] 경로 시작 감지 → GPS 켜기');
-      startGps();
+      // 추천 경로 안내 중이면 /app/location/my GPS 전송 불필요
+      // (recoLiveRouteProvider가 /app/location/reco를 전송함)
+      if (!next.isUsingRecoRoute) {
+        debugPrint('[LiveLocation] 경로 시작(나의 경로) → GPS + STOMP 켜기');
+        ensureStompConnected();
+        startGps();
+      } else {
+        debugPrint('[LiveLocation] 경로 시작(추천 경로) → my GPS 생략');
+      }
     }
 
-    // 2. 사용자가 "종료" 버튼을 누름 또는 도착 → preActive 전환 → GPS 끄기
     if (prev?.status == HomeStatus.active && next.status != HomeStatus.active) {
-      debugPrint('[LiveLocation] 경로 종료 감지 → GPS 끄기');
+      debugPrint('[LiveLocation] 경로 종료 → GPS 끄기');
       stopGps();
     }
 
-    // 3. preActive 상태에서 출발 임박(10분 전) → GPS 미리 켜기
-    if (next.status == HomeStatus.preActive && next.isDepartureImminent && sub == null) {
-      debugPrint('[LiveLocation] 출발 임박 감지 → GPS 미리 켜기');
+    // 추천 경로로 전환 시 my GPS 중단
+    if (next.status == HomeStatus.active &&
+        prev?.isUsingRecoRoute == false &&
+        next.isUsingRecoRoute == true) {
+      debugPrint('[LiveLocation] 추천 경로 전환 → my GPS 중단');
+      stopGps();
+    }
+
+    // 추천 경로 안내 종료 후 나의 경로로 복귀 시 my GPS 재시작
+    if (next.status == HomeStatus.active &&
+        prev?.isUsingRecoRoute == true &&
+        next.isUsingRecoRoute == false) {
+      debugPrint('[LiveLocation] 나의 경로 복귀 → my GPS 재시작');
+      ensureStompConnected();
+      startGps();
+    }
+
+    if (next.status == HomeStatus.preActive &&
+        next.isDepartureImminent &&
+        sub == null) {
+      debugPrint('[LiveLocation] 출발 임박 → GPS 미리 켜기');
+      ensureStompConnected();
       startGps();
     }
   });
 
-  // 1분마다 active 상태인데 GPS 꺼진 경우 재시작 (앱 재시작 복구)
+  // 1분마다 active인데 GPS 꺼진 경우 재시작 (나의 경로일 때만)
   scheduleTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-    final homeState = ref.read(homeProvider);
-    if (homeState.status == HomeStatus.active && sub == null) {
-      debugPrint('[LiveLocation] active인데 GPS 꺼짐 감지 → 재시작');
+    final s = ref.read(homeProvider);
+    if (s.status == HomeStatus.active && !s.isUsingRecoRoute && sub == null) {
+      debugPrint('[LiveLocation] active(나의 경로)인데 GPS 꺼짐 → 재시작');
       startGps();
     }
   });
 
-  // 앱 시작 시 이미 active 상태면 GPS 즉시 시작
-  final initialState = ref.read(homeProvider);
-  if (initialState.status == HomeStatus.active ||
-      (initialState.status == HomeStatus.preActive && initialState.isDepartureImminent)) {
+  // 앱 시작 시 이미 active(나의 경로) 또는 출발 임박이면 즉시 시작
+  final initial = ref.read(homeProvider);
+  if ((initial.status == HomeStatus.active && !initial.isUsingRecoRoute) ||
+      (initial.status == HomeStatus.preActive && initial.isDepartureImminent)) {
+    ensureStompConnected();
     startGps();
   }
 

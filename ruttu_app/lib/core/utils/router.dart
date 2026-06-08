@@ -5,13 +5,9 @@ import '../../features/auth/screens/splash_screen.dart' show SplashScreen;
 import '../../features/auth/screens/nickname_setup_screen.dart';
 import '../../features/auth/screens/onboarding_screen.dart';
 import '../../features/auth/screens/dormant_restore_screen.dart';
-import '../../features/home/screens/home_screen.dart';
-import '../../features/routine/screens/routine_list_screen.dart';
 import '../../features/routine/screens/routine_detail_screen.dart';
 import '../../features/routine/screens/routine_create_screen.dart';
 import '../../data/models/routine_model.dart';
-import '../../features/briefing/screens/briefing_screen.dart';
-import '../../features/community/screens/community_screen.dart';
 import '../../features/community/screens/post_detail_screen.dart';
 import '../../features/community/screens/post_create_screen.dart';
 import '../../features/mypage/screens/mypage_screen.dart';
@@ -155,28 +151,38 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: RouteConstants.accountDeleted,
         builder: (context, state) => const AccountDeletedScreen(),
       ),
+
+      // ─────────────────────────────────────────────────────────────────────
+      // ShellRoute: 바텀 네비게이션이 있는 5개 탭 루트 경로
+      //
+      // MainScaffold가 IndexedStack으로 탭 화면을 직접 렌더링하므로,
+      // 각 GoRoute의 builder는 SizedBox.shrink()를 반환해도 무방하다.
+      // (child는 MainScaffold 내부에서 사용되지 않음)
+      //
+      // 이 경로들은 redirect, 딥링크, context.go() 대상으로만 기능한다.
+      // ─────────────────────────────────────────────────────────────────────
       ShellRoute(
         builder: (context, state, child) => MainScaffold(child: child),
         routes: [
           GoRoute(
             path: RouteConstants.home,
-            builder: (context, state) => const HomeScreen(),
+            builder: (context, state) => const SizedBox.shrink(),
           ),
           GoRoute(
             path: RouteConstants.routine,
-            builder: (context, state) => const RoutineListScreen(),
+            builder: (context, state) => const SizedBox.shrink(),
           ),
           GoRoute(
             path: RouteConstants.briefing,
-            builder: (context, state) => const BriefingScreen(),
+            builder: (context, state) => const SizedBox.shrink(),
           ),
           GoRoute(
             path: RouteConstants.community,
-            builder: (context, state) => const CommunityScreen(),
+            builder: (context, state) => const SizedBox.shrink(),
           ),
           GoRoute(
             path: RouteConstants.mypage,
-            builder: (context, state) => const MypageScreen(),
+            builder: (context, state) => const SizedBox.shrink(),
           ),
         ],
       ),

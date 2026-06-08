@@ -9,22 +9,53 @@ abstract class HomeRepository {
   Future<List<RoutineModel>> getRoutines();
   Future<RoutineModel> getRoutineDetail(int routineId);
   Future<RouteModel> getRouteDetail(int recoId);
-  Future<LiveStatusModel> getLiveStatus();
+
+  // ── REST 전용 ─────────────────────────────────────────────────────────
+  // 이 아래 메서드들은 REST API 호출로 초기 1회 fetch 또는 저장 용도로만 사용.
+  // 실시간 STREAM 수신은 StompService를 직접 구독하는 Provider에서 처리한다.
+
+  /// REST GET /me/routines/active/route — 나의 경로 정보 (초기 1회 fetch)
   Future<LiveRouteModel> getMyRoute();
+
+  /// REST GET /me/routines/active/reco — 추천 경로 정보 (초기 1회 fetch)
   Future<LiveRouteModel> getRecommendedRoute();
-  /// GET /me/routines/active/reco — 추천 경로 목록 (RouteListDto[])
+
+  /// REST GET /me/routines/active/reco — 추천 경로 목록 (RouteListDto[])
   Future<List<RouteModel>> getRecoRouteList();
-  /// GET /me/routines/active/reco — 추천 경로 목록 + 돌발 사고 정보 래퍼
+
+  /// REST GET /me/routines/active/reco — 추천 경로 목록 + 돌발/우회 래퍼
+  /// ※ 실시간 사고/우회 경로는 STOMP /user/queue/incident·detour 로 수신
   Future<RecoRouteListResponse> getRecoRouteListResponse();
-  /// POST /me/routines/active/reco/{recoId} — 추천 경로 선택 저장
+
+  /// REST POST /me/routines/active/reco/{recoId} — 추천 경로 선택 저장
   Future<void> saveRecoRoute(int recoId);
-  /// GET /me/routines/active/reco/{recoId} — 추천 경로 상세
+
+  /// REST GET /me/routines/active/reco/{recoId} — 추천 경로 상세
   Future<RouteModel> getRecoRouteDetail(int recoId);
+
+  /// REST GET /me/routines/active/reco/detour/{pathId}
+  /// — 우회 경로 상세 (DetourModel 기반 → RouteModel 변환)
+  Future<RouteModel> getDetourDetail(int pathId);
+
+  /// REST POST /me/routines/active/reco/detour/{pathId} — 우회 경로 선택 저장
+  Future<void> saveDetourRoute(int pathId);
+
+  /// REST GET /me/routines/active/location/my
+  /// — 나의 경로 현재 구간 초기 1회 fetch
+  /// ※ 이후 실시간 갱신은 STOMP /user/queue/location/my 구독으로 처리
   Future<CurrentSectionModel?> getCurrentSection();
+
+  /// REST GET /me/routines/active/location/reco
+  /// — 추천 경로 현재 구간 초기 1회 fetch
+  /// ※ 이후 실시간 갱신은 STOMP /user/queue/location/reco 구독으로 처리
   Future<CurrentSectionModel?> getRecoCurrentSection();
+
   Future<List<IssueModel>> getTodayIssues();
   Future<WeatherAirQualityModel> getWeatherAirQuality();
 
+  /// STOMP /app/location/my 또는 /app/location/reco 로 위치 전송
+  /// ※ StompService.send()를 직접 사용하므로 이 메서드는 내부적으로
+  ///   StompService를 위임 호출한다.
   Future<void> sendLiveLocation({
     required double latitude,
     required double longitude,
@@ -32,7 +63,7 @@ abstract class HomeRepository {
     required double accuracy,
   });
 
-  /// POST /me/routines/active/complete/my  (나의 경로로 완료)
+  /// REST POST /me/routines/active/complete/my  (나의 경로로 완료)
   Future<void> completeMyRoute({
     required DateTime departureTime,
     required DateTime arrivalTime,
@@ -41,7 +72,7 @@ abstract class HomeRepository {
     int? satRouteScore,
   });
 
-  /// POST /me/routines/active/complete/reco  (추천 경로로 완료)
+  /// REST POST /me/routines/active/complete/reco  (추천 경로로 완료)
   Future<void> completeRecoRoute({
     required DateTime departureTime,
     required DateTime arrivalTime,
@@ -50,7 +81,7 @@ abstract class HomeRepository {
     int? satRouteScore,
   });
 
-  /// POST /me/routines/active/complete (routineId 제외 반영)
+  /// REST POST /me/routines/active/complete
   Future<void> completeRoutine({
     required DateTime departureTime,
     required DateTime arrivalTime,
@@ -94,18 +125,16 @@ class ApiHomeRepository implements HomeRepository {
     return RouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
-  @override
-  Future<LiveStatusModel> getLiveStatus() async {
-    final response = await _dio.get(ApiConstants.liveStatus);
-    return LiveStatusModel.fromJson(response.data as Map<String, dynamic>);
-  }
-
+  // ── REST: 나의 경로 초기 fetch ────────────────────────────────────────
+  // 실시간 갱신: STOMP /user/queue/location/my (MyRouteNotifier 구독)
   @override
   Future<LiveRouteModel> getMyRoute() async {
     final response = await _dio.get(ApiConstants.liveMyRoute);
     return LiveRouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
+  // ── REST: 추천 경로 초기 fetch ────────────────────────────────────────
+  // 실시간 갱신: STOMP /user/queue/location/reco (RecoRouteNotifier 구독)
   @override
   Future<LiveRouteModel> getRecommendedRoute() async {
     final response = await _dio.get(ApiConstants.liveRecoRoute);
@@ -121,6 +150,10 @@ class ApiHomeRepository implements HomeRepository {
         .toList();
   }
 
+  // ── REST: 추천 경로 목록 초기 fetch ─────────────────────────────────
+  // 돌발 사고·우회 경로 실시간 갱신:
+  //   STOMP /user/queue/incident  (IncidentDetourNotifier.subscribeRaw)
+  //   STOMP /user/queue/detour    (IncidentDetourNotifier.subscribeRaw)
   @override
   Future<RecoRouteListResponse> getRecoRouteListResponse() async {
     final response = await _dio.get(ApiConstants.liveRecoRouteList);
@@ -139,11 +172,77 @@ class ApiHomeRepository implements HomeRepository {
   }
 
   @override
+  Future<RouteModel> getDetourDetail(int pathId) async {
+    final response = await _dio.get('/me/routines/active/reco/detour/$pathId');
+
+    // 서버가 List<DetourDto> 배열로 응답하는 경우 — pathId로 찾아 변환
+    if (response.data is List) {
+      final list = (response.data as List<dynamic>)
+          .map((e) => DetourModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+      final found = list.firstWhere(
+        (d) => d.pathId == pathId,
+        orElse: () => list.first,
+      );
+      return _detourToRouteModel(found);
+    }
+
+    // 단건 Map 응답
+    final data = response.data as Map<String, dynamic>;
+    if (data.containsKey('path_segments')) {
+      final detour = DetourModel.fromJson(data);
+      return _detourToRouteModel(detour);
+    }
+    return RouteModel.fromJson(data);
+  }
+
+  RouteModel _detourToRouteModel(DetourModel detour) {
+    final paths = detour.pathSegments.map((seg) {
+      // DetourSegmentModel.type은 "TRANSIT" | "TRANSFER"이지만
+      // PathModel은 "walk" | "bus" | "subway"를 기대한다.
+      // TRANSFER → "walk"
+      // TRANSIT  → displayName으로 지하철/버스 구분
+      String mappedType;
+      if (seg.isWalk) {
+        mappedType = 'walk';
+      } else if (seg.isSubway) {
+        mappedType = 'subway';
+      } else {
+        mappedType = 'bus';
+      }
+      return PathModel(
+        type: mappedType,
+        sectionTime: seg.segmentDurationMin.round(),
+        no: seg.displayName,
+        stationCount: seg.stopCount,
+        stationName: seg.stations.map((s) => s.name).toList(),
+      );
+    }).toList();
+    return RouteModel(
+      recoId: detour.pathId,
+      totalDistance: detour.pathSegments.fold(0, (s, e) => s + e.totalDistanceM),
+      totalTime: detour.totalDurationMin.round(),
+      payment: 0,
+      path: paths,
+      isDetour: true,
+    );
+  }
+
+  @override
+  Future<void> saveDetourRoute(int pathId) async {
+    await _dio.post('/me/routines/active/reco/detour/$pathId');
+  }
+
+  // ── REST: 나의 경로 현재 구간 초기 1회 fetch ─────────────────────────
+  // 이후 실시간 갱신: STOMP /user/queue/location/my
+  @override
   Future<CurrentSectionModel?> getCurrentSection() async {
     final response = await _dio.get(ApiConstants.liveCurrentSection);
     return CurrentSectionModel.fromJson(response.data as Map<String, dynamic>);
   }
 
+  // ── REST: 추천 경로 현재 구간 초기 1회 fetch ─────────────────────────
+  // 이후 실시간 갱신: STOMP /user/queue/location/reco
   @override
   Future<CurrentSectionModel?> getRecoCurrentSection() async {
     final response = await _dio.get(ApiConstants.liveCurrentSectionReco);
@@ -166,6 +265,9 @@ class ApiHomeRepository implements HomeRepository {
     );
   }
 
+  // ── STOMP 위치 전송 ───────────────────────────────────────────────────
+  // liveLocationProvider에서 StompService.send()를 직접 호출하므로
+  // 이 메서드는 더 이상 사용되지 않는다. 인터페이스 호환성을 위해 유지.
   @override
   Future<void> sendLiveLocation({
     required double latitude,
@@ -173,20 +275,9 @@ class ApiHomeRepository implements HomeRepository {
     required double speed,
     required double accuracy,
   }) async {
-    try {
-      await _dio.patch(
-        ApiConstants.liveLocation,
-        data: {
-          'latitude': latitude,
-          'longitude': longitude,
-          'speed': speed,
-          'accuracy': accuracy,
-        },
-      );
-      debugPrint('[LiveLocation] 전송 성공: lat=$latitude, lng=$longitude');
-    } catch (e) {
-      debugPrint('[LiveLocation] 전송 실패 (무시됨): $e');
-    }
+    // STOMP 전송은 liveLocationProvider → StompService.send() 로 처리됨.
+    // REST fallback이 필요한 경우 아래 코드를 활성화할 것.
+    debugPrint('[sendLiveLocation] STOMP로 처리됨 — REST 호출 생략');
   }
 
   String _formatTime(DateTime time) {

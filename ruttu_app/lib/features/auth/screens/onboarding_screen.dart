@@ -1176,7 +1176,6 @@ class _BriefingDetailContent extends StatelessWidget {
           const SizedBox(height: 6),
           ...[
             (Icons.cloud_rounded, const Color(0xFF3B82F6), '날씨 요약', '기온·강수·체감 온도'),
-            (Icons.warning_amber_rounded, AppColors.error, '교통 이슈', '지연·공사·혼잡 구간'),
             (Icons.schedule_rounded, AppColors.primary, '추천 출발 시각', '루틴별 최적 시간 계산'),
             (Icons.calendar_today_rounded, const Color(0xFF7C3AED), '오늘 일정', '캘린더 연동 일정 요약'),
             (Icons.backpack_rounded, const Color(0xFF059669), '준비물 안내', '우산·겉옷 등 날씨 맞춤'),
@@ -1259,7 +1258,6 @@ class _CommunityDetailContent extends StatelessWidget {
               )),
           const SizedBox(height: 4),
           ...[
-            (Icons.chat_bubble_outline_rounded, const Color(0xFF7C3AED), '노선별 게시판', '노선·역별로 글 필터링'),
             (Icons.trending_up_rounded, AppColors.error, '실시간 혼잡도 공유', '직접 경험한 정보 공유'),
             (Icons.sort_rounded, const Color(0xFF059669), '최신순·조회순 정렬', '필요한 정보 빠르게 탐색'),
           ].map((e) => _FeatureRow(icon: e.$1, color: e.$2, title: e.$3, desc: e.$4)),

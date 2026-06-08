@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class TokenStorage {
@@ -5,13 +6,36 @@ class TokenStorage {
 
   static const _accessTokenKey            = 'access_token';
   static const _refreshTokenKey           = 'refresh_token';
-  static const _accessTokenExpiresAtKey   = 'access_token_expires_at'; // 만료 시각(ms)
   static const _userIdKey                 = 'user_id';
   static const _hasNicknameKey            = 'has_nickname';
   static const _gpsPermissionRequestedKey = 'gps_permission_requested';
 
-  /// 액세스 토큰 유효 기간 (서버 설정과 동일: 2시간)
-  static const _accessTokenTtlMs = 7200000;
+  // ── JWT exp 파싱 ──────────────────────────────────────────────────────────
+
+  /// JWT payload에서 exp 클레임을 꺼내 밀리초 단위 Unix 시각으로 반환.
+  /// 파싱 실패 시 null 반환.
+  static int? _extractExpMs(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+
+      // Base64URL → Base64 변환 후 디코딩
+      String payload = parts[1];
+      // 패딩 보정
+      switch (payload.length % 4) {
+        case 2: payload += '=='; break;
+        case 3: payload += '=';  break;
+      }
+      final decoded = utf8.decode(base64Url.decode(payload));
+      final map = json.decode(decoded) as Map<String, dynamic>;
+      final exp = map['exp'];
+      if (exp == null) return null;
+      // exp는 초 단위 Unix timestamp
+      return (exp as num).toInt() * 1000;
+    } catch (_) {
+      return null;
+    }
+  }
 
   // ── 저장 ──────────────────────────────────────────────────────────────────
 
@@ -20,24 +44,16 @@ class TokenStorage {
     required String refreshToken,
     required int userId,
   }) async {
-    final expiresAt =
-        DateTime.now().millisecondsSinceEpoch + _accessTokenTtlMs;
     await Future.wait([
-      _storage.write(key: _accessTokenKey,          value: accessToken),
-      _storage.write(key: _refreshTokenKey,         value: refreshToken),
-      _storage.write(key: _accessTokenExpiresAtKey, value: expiresAt.toString()),
-      _storage.write(key: _userIdKey,               value: userId.toString()),
+      _storage.write(key: _accessTokenKey,  value: accessToken),
+      _storage.write(key: _refreshTokenKey, value: refreshToken),
+      _storage.write(key: _userIdKey,       value: userId.toString()),
     ]);
   }
 
-  /// 액세스 토큰 갱신 시 토큰 + 만료 시각을 함께 저장
+  /// 액세스 토큰 갱신 시 토큰 저장 (만료 시각은 JWT exp에서 직접 파싱)
   Future<void> saveAccessToken(String token) async {
-    final expiresAt =
-        DateTime.now().millisecondsSinceEpoch + _accessTokenTtlMs;
-    await Future.wait([
-      _storage.write(key: _accessTokenKey,          value: token),
-      _storage.write(key: _accessTokenExpiresAtKey, value: expiresAt.toString()),
-    ]);
+    await _storage.write(key: _accessTokenKey, value: token);
   }
 
   // ── 조회 ──────────────────────────────────────────────────────────────────
@@ -55,15 +71,18 @@ class TokenStorage {
     return token != null && token.isNotEmpty;
   }
 
-  /// 액세스 토큰이 [thresholdMinutes]분 이내에 만료되는지 여부
+  /// 액세스 토큰이 [thresholdMinutes]분 이내에 만료되는지 여부.
+  /// JWT payload의 exp 클레임을 직접 파싱하므로 로컬 시계 오차에 영향 없음.
   /// true → 미리 재발급 필요
   Future<bool> isAccessTokenExpiringSoon({int thresholdMinutes = 5}) async {
-    final raw = await _storage.read(key: _accessTokenExpiresAtKey);
-    if (raw == null) return true; // 저장된 만료 정보 없으면 갱신 필요로 간주
-    final expiresAt = int.tryParse(raw);
-    if (expiresAt == null) return true;
+    final token = await _storage.read(key: _accessTokenKey);
+    if (token == null || token.isEmpty) return true;
+
+    final expMs = _extractExpMs(token);
+    if (expMs == null) return true; // 파싱 실패 → 안전하게 갱신 필요로 간주
+
     final threshold = thresholdMinutes * 60 * 1000;
-    final remaining = expiresAt - DateTime.now().millisecondsSinceEpoch;
+    final remaining = expMs - DateTime.now().millisecondsSinceEpoch;
     return remaining < threshold;
   }
 

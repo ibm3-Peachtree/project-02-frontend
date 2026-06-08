@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../data/models/route_model.dart';
 import '../providers/reco_live_route_provider.dart';
+import '../providers/home_provider.dart';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 추천 경로 실시간 안내 화면
@@ -16,8 +17,15 @@ import '../providers/reco_live_route_provider.dart';
 
 class RecoLiveRouteScreen extends ConsumerStatefulWidget {
   final int recoId;
+  /// 우회 경로 선택 시 true. pathId == recoId로 전달됨.
+  /// true이면 initDetour(recoId), false이면 init(recoId) 호출.
+  final bool isDetour;
 
-  const RecoLiveRouteScreen({super.key, required this.recoId});
+  const RecoLiveRouteScreen({
+    super.key,
+    required this.recoId,
+    this.isDetour = false,
+  });
 
   @override
   ConsumerState<RecoLiveRouteScreen> createState() =>
@@ -28,12 +36,26 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
   // 정거장 목록 펼침 상태 (pathIndex → expanded)
   final Map<int, bool> _expandedStops = {};
   NaverMapController? _mapController;
+  // _onMapReady 시점에 routeDetail이 아직 없으면 true로 설정,
+  // 이후 routeDetail이 도착했을 때 지도를 그린다.
+  bool _pendingDraw = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(recoLiveRouteProvider.notifier).init(widget.recoId);
+      // STOMP section 수신 시 homeProvider도 즉시 동기화
+      // → _poll()의 recoStepIdx 재계산에 최신 recoCurrentSectionData가 반영됨
+      ref.read(recoLiveRouteProvider.notifier).onSectionUpdate = (section) {
+        try {
+          ref.read(homeProvider.notifier).updateRecoSection(section);
+        } catch (_) {}
+      };
+      if (widget.isDetour) {
+        ref.read(recoLiveRouteProvider.notifier).initDetour(widget.recoId);
+      } else {
+        ref.read(recoLiveRouteProvider.notifier).init(widget.recoId);
+      }
     });
   }
 
@@ -50,6 +72,8 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
     if (state.routeDetail != null) {
       _drawRoute(controller, state);
     } else {
+      // routeDetail 아직 미도착 — fetch 완료 시 ref.listen이 그려줌
+      _pendingDraw = true;
       _moveToCurrentLocation(controller);
     }
   }
@@ -192,9 +216,17 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
           next.currentSection != prev?.currentSection) {
         _updateCurrentMarker(next.currentSection!);
       }
-      // 경로 처음 로드되면 지도 그리기
-      if (prev?.routeDetail == null && next.routeDetail != null && _mapController != null) {
-        _drawRoute(_mapController!, next);
+      // routeDetail이 처음 도착했을 때 지도 그리기
+      // (_pendingDraw: 지도가 먼저 준비됐지만 데이터가 없었던 경우)
+      if (prev?.routeDetail == null && next.routeDetail != null) {
+        final ctrl = _mapController;
+        if (ctrl != null) {
+          _pendingDraw = false;
+          _drawRoute(ctrl, next);
+        } else {
+          // 지도 자체가 아직 준비 안 됨 — _onMapReady에서 처리됨
+          _pendingDraw = true;
+        }
       }
     });
 
@@ -450,6 +482,23 @@ class _AlertBanner extends StatelessWidget {
   const _AlertBanner({required this.currentSection});
   final CurrentSectionModel currentSection;
 
+  /// 현재 idx 기준으로 같은 구간(버스/지하철) 내 남은 정거장 수를 계산.
+  /// 도보 구간이면 null 반환 (하차 알림 불필요).
+  int? _remainingStops() {
+    final groups = currentSection.groupedSections;
+    if (groups.isEmpty) return null;
+
+    final curGroupIdx = groups.indexWhere(
+      (g) => currentSection.idx >= g.startIdx && currentSection.idx <= g.endIdx,
+    );
+    if (curGroupIdx < 0) return null;
+
+    final curGroup = groups[curGroupIdx];
+    if (curGroup.isWalk) return null;
+
+    return curGroup.endIdx - currentSection.idx;
+  }
+
   String _buildNextLabel() {
     final groups = currentSection.groupedSections;
     if (groups.isEmpty) return '';
@@ -470,31 +519,35 @@ class _AlertBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final currentName = _buildCurrentName();
     final nextLabel = _buildNextLabel();
+    final remaining = _remainingStops();
+    // 1정거장 이하로 남았을 때만 하차 알림 표시
+    final showAlertBanner = remaining != null && remaining <= 1;
 
     return Column(
       children: [
-        // 1정거장 후 하차 알림
-        Container(
-          width: double.infinity,
-          color: const Color(0xFFFFF3CD),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(
-            children: [
-              const Icon(Icons.warning_amber_rounded,
-                  size: 16, color: Color(0xFF856404)),
-              const SizedBox(width: 8),
-              const Text(
-                '1정거장 후 하차 — 준비하세요',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF856404),
+        if (showAlertBanner)
+          Container(
+            width: double.infinity,
+            color: const Color(0xFFFFF3CD),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded,
+                    size: 16, color: Color(0xFF856404)),
+                const SizedBox(width: 8),
+                Text(
+                  remaining == 0
+                      ? '다음 정거장에서 하차하세요!'
+                      : '1정거장 후 하차 — 준비하세요',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF856404),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        // 현재 위치 → 다음 구간
         if (currentName.isNotEmpty || nextLabel.isNotEmpty)
           Container(
             width: double.infinity,
@@ -865,7 +918,8 @@ class _LivePathItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasStations = path.stationName.isNotEmpty;
+    // 도보 구간은 정거장 목록 표시 안 함
+    final hasStations = path.stationName.isNotEmpty && !path.isWalking;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,

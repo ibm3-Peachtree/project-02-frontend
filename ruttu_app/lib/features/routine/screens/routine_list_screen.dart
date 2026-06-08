@@ -5,6 +5,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/constants/route_constants.dart';
 import '../../../data/models/routine_model.dart';
 import '../providers/routine_provider.dart';
+import '../../home/providers/home_provider.dart';
 
 class RoutineListScreen extends ConsumerStatefulWidget {
   const RoutineListScreen({super.key});
@@ -102,6 +103,15 @@ class _RoutineListScreenState extends ConsumerState<RoutineListScreen> {
                                 .replaceFirst(':id', '${filtered[i].routineId}'),
                           ),
                           onDelete: () => _confirmDelete(context, filtered[i]),
+                          onEdit: () async {
+                            await context.push(
+                              RouteConstants.routineCreate,
+                              extra: filtered[i],
+                            );
+                            if (context.mounted) {
+                              ref.read(homeProvider.notifier).initialize();
+                            }
+                          },
                         ),
                       ),
               ),
@@ -140,12 +150,12 @@ class _RoutineListScreenState extends ConsumerState<RoutineListScreen> {
             style: const TextStyle(fontSize: 14, color: AppColors.textSecondary)),
         actions: [
           TextButton(
-            onPressed: () => dialogContext.pop(false),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
             child: const Text('취소',
                 style: TextStyle(color: AppColors.textSecondary)),
           ),
           ElevatedButton(
-            onPressed: () => dialogContext.pop(true),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
             child: const Text('삭제'),
           ),
@@ -154,6 +164,10 @@ class _RoutineListScreenState extends ConsumerState<RoutineListScreen> {
     );
     if (confirmed == true && mounted) {
       await ref.read(routineListProvider.notifier).deleteRoutine(routine.routineId);
+      // 홈 화면도 갱신 (루틴 삭제 후 홈 상태 반영)
+      if (mounted) {
+        ref.read(homeProvider.notifier).initialize();
+      }
     }
   }
 }
@@ -212,11 +226,13 @@ class _RoutineCard extends StatelessWidget {
   final RoutineModel routine;
   final VoidCallback onTap;
   final VoidCallback onDelete;
+  final VoidCallback onEdit;
 
   const _RoutineCard({
     required this.routine,
     required this.onTap,
     required this.onDelete,
+    required this.onEdit,
   });
 
   @override
@@ -389,7 +405,7 @@ class _RoutineCard extends StatelessWidget {
               title: const Text('수정'),
               onTap: () {
                 Navigator.pop(context);
-                context.push(RouteConstants.routineCreate, extra: routine);
+                onEdit();
               },
             ),
             ListTile(

@@ -1,41 +1,68 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../data/models/post_model.dart';
 import '../../../data/repositories/community_repository.dart';
+import '../../../features/auth/providers/network_provider.dart';
 
 final communityRepositoryProvider = Provider<CommunityRepository>(
-  (_) => MockCommunityRepository(),
+  (ref) => ApiCommunityRepository(ref.read(apiClientProvider)),
 );
 
 // ── 피드 상태 ─────────────────────────────────────
 class FeedState {
   final PostSummaryModel? hotPost;
-  final List<PostSummaryModel> posts;
+  final List<PostSummaryModel> posts;      // 필터 적용된 목록
+  final List<PostSummaryModel> allPosts;   // 필터 전 전체 목록 (칩 생성용)
+  final List<PostSummaryModel> myPosts;
   final String sortType;   // 'latest' | 'view'
   final String? routeFilter;
   final bool isLoading;
+  final bool isMyPostsLoading;
+  final String? error;
 
   const FeedState({
     this.hotPost,
     this.posts = const [],
+    this.allPosts = const [],
+    this.myPosts = const [],
     this.sortType = 'latest',
     this.routeFilter,
     this.isLoading = false,
+    this.isMyPostsLoading = false,
+    this.error,
   });
+
+  /// 전체 게시글에서 중복 없이 lineNumber 추출 (빈 값 제외)
+  List<String> get allRoutes {
+    final seen = <String>{};
+    return allPosts
+        .map((p) => p.lineNumber)
+        .where((r) => r.isNotEmpty && seen.add(r))
+        .toList();
+  }
 
   FeedState copyWith({
     PostSummaryModel? hotPost,
     List<PostSummaryModel>? posts,
+    List<PostSummaryModel>? allPosts,
+    List<PostSummaryModel>? myPosts,
     String? sortType,
     String? routeFilter,
     bool clearRoute = false,
     bool? isLoading,
+    bool? isMyPostsLoading,
+    String? error,
+    bool clearError = false,
   }) =>
       FeedState(
-        hotPost:     hotPost     ?? this.hotPost,
-        posts:       posts       ?? this.posts,
-        sortType:    sortType    ?? this.sortType,
-        routeFilter: clearRoute ? null : (routeFilter ?? this.routeFilter),
-        isLoading:   isLoading   ?? this.isLoading,
+        hotPost:           hotPost           ?? this.hotPost,
+        posts:             posts             ?? this.posts,
+        allPosts:          allPosts          ?? this.allPosts,
+        myPosts:           myPosts           ?? this.myPosts,
+        sortType:          sortType          ?? this.sortType,
+        routeFilter:       clearRoute ? null : (routeFilter ?? this.routeFilter),
+        isLoading:         isLoading         ?? this.isLoading,
+        isMyPostsLoading:  isMyPostsLoading  ?? this.isMyPostsLoading,
+        error:             clearError ? null : (error ?? this.error),
       );
 }
 
@@ -49,20 +76,43 @@ class FeedNotifier extends StateNotifier<FeedState> {
   FeedNotifier(this._repository) : super(const FeedState());
 
   Future<void> load() async {
-    state = state.copyWith(isLoading: true);
-    final results = await Future.wait([
-      _repository.getHotPost(),
-      _repository.getFeeds(
-        sort: state.sortType,
-        route: state.routeFilter,
-      ),
-    ]);
-    state = FeedState(
-      hotPost:     results[0] as PostSummaryModel?,
-      posts:       results[1] as List<PostSummaryModel>,
-      sortType:    state.sortType,
-      routeFilter: state.routeFilter,
-    );
+    state = state.copyWith(isLoading: true, clearError: true);
+    try {
+      final posts = await _repository.getPosts(sort: state.sortType);
+      // 필터 적용 (클라이언트 사이드 — 백엔드에 필터 파라미터 없음)
+      var filtered = posts;
+      if (state.routeFilter != null && state.routeFilter!.isNotEmpty) {
+        filtered = posts
+            .where((p) => p.lineNumber.contains(state.routeFilter!))
+            .toList();
+      }
+      // 조회수 1위 = hotPost
+      final hot = posts.isEmpty
+          ? null
+          : (List<PostSummaryModel>.from(posts)
+                ..sort((a, b) => b.viewCount.compareTo(a.viewCount)))
+              .first;
+      state = FeedState(
+        hotPost:     hot,
+        posts:       filtered,
+        allPosts:    posts,
+        myPosts:     state.myPosts,
+        sortType:    state.sortType,
+        routeFilter: state.routeFilter,
+      );
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: '게시글을 불러오지 못했어요.');
+    }
+  }
+
+  Future<void> loadMyPosts() async {
+    state = state.copyWith(isMyPostsLoading: true);
+    try {
+      final myPosts = await _repository.getMyPosts();
+      state = state.copyWith(myPosts: myPosts, isMyPostsLoading: false);
+    } catch (e) {
+      state = state.copyWith(isMyPostsLoading: false, error: '내 게시글을 불러오지 못했어요.');
+    }
   }
 
   Future<void> setSort(String sort) async {
@@ -78,37 +128,45 @@ class FeedNotifier extends StateNotifier<FeedState> {
     await load();
   }
 
+  Future<void> createPost(
+    CreatePostRequest request, {
+    dynamic imageFile,
+  }) async {
+    await _repository.createPost(request, imageFile: imageFile);
+    await load();
+  }
+
+  Future<void> updatePost(
+    int postId,
+    CreatePostRequest request, {
+    dynamic imageFile,
+  }) async {
+    await _repository.updatePost(postId, request, imageFile: imageFile);
+  }
+
   Future<void> deletePost(int postId) async {
     await _repository.deletePost(postId);
     await load();
+    await loadMyPosts();
   }
 }
 
 // ── 게시글 상세 상태 ──────────────────────────────
 class PostDetailState {
   final PostDetailModel? post;
-  final List<CommentModel> comments;
   final bool isLoading;
-  final bool isSending;
-
   const PostDetailState({
     this.post,
-    this.comments = const [],
     this.isLoading = false,
-    this.isSending = false,
   });
 
   PostDetailState copyWith({
     PostDetailModel? post,
-    List<CommentModel>? comments,
     bool? isLoading,
-    bool? isSending,
   }) =>
       PostDetailState(
         post:      post      ?? this.post,
-        comments:  comments  ?? this.comments,
         isLoading: isLoading ?? this.isLoading,
-        isSending: isSending ?? this.isSending,
       );
 }
 
@@ -127,33 +185,15 @@ class PostDetailNotifier extends StateNotifier<PostDetailState> {
 
   Future<void> load() async {
     state = state.copyWith(isLoading: true);
-    final results = await Future.wait([
-      _repository.getPostDetail(_postId),
-      _repository.getComments(_postId),
-    ]);
-    state = PostDetailState(
-      post:     results[0] as PostDetailModel,
-      comments: results[1] as List<CommentModel>,
-    );
-  }
-
-  Future<void> sendComment(String content) async {
-    if (content.trim().isEmpty) return;
-    state = state.copyWith(isSending: true);
-    await _repository.createComment(_postId, content.trim());
-    final comments = await _repository.getComments(_postId);
-    state = state.copyWith(comments: comments, isSending: false);
-  }
-
-  Future<void> deleteComment(int commentId) async {
-    await _repository.deleteComment(commentId);
-    final comments = await _repository.getComments(_postId);
-    state = state.copyWith(comments: comments);
+    try {
+      final post = await _repository.getPostDetail(_postId);
+      state = PostDetailState(post: post);
+    } catch (e) {
+      state = state.copyWith(isLoading: false);
+    }
   }
 
   Future<void> reportPost(String reason) =>
       _repository.reportPost(_postId, reason);
 
-  Future<void> reportComment(int commentId, String reason) =>
-      _repository.reportComment(commentId, reason);
 }

@@ -35,19 +35,25 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
     }
   }
 
+  static const _enumToIssueType = {
+    'DELAY':        '지연',
+    'CANCELLATION': '결행',
+    'CROWD':        '혼잡',
+    'ETC':          '기타',
+  };
+
   void _prefillForEdit() {
     final postId = widget.editPostId!;
     final detail = ref.read(postDetailProvider(postId));
     final post = detail.post;
-    if (post == null) {
-      return;
-    }
+    if (post == null) return;
     _titleController.text   = post.title;
     _contentController.text = post.content;
     setState(() {
-      _selectedRoute   = post.route;
-      _selectedStation = post.station;
-      _selectedTransportType = _inferTransportType(post.route);
+      _selectedRoute         = post.lineNumber;
+      _selectedStation       = post.stationName.isEmpty ? null : post.stationName;
+      _selectedTransportType = post.transportType == 'BUS' ? '버스' : '지하철';
+      _selectedIssueType     = _enumToIssueType[post.issueType];
     });
   }
 
@@ -89,14 +95,23 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
     );
   }
 
+  // 한국어 → 백엔드 enum 변환
+  static const _issueTypeToEnum = {
+    '지연': 'DELAY',
+    '결행': 'CANCELLATION',
+    '혼잡': 'CROWD',
+    '기타': 'ETC',
+  };
+  static const _transportTypeToEnum = {
+    '버스':     'BUS',
+    '지하철':   'SUBWAY',
+    '도로현황': 'SUBWAY', // 백엔드에 ROAD 없으므로 fallback
+  };
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedRoute == null) {
       _showError('노선을 선택해주세요.');
-      return;
-    }
-    if (_selectedStation == null) {
-      _showError('정류장/역을 선택해주세요.');
       return;
     }
     if (_selectedIssueType == null) {
@@ -106,16 +121,23 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
 
     setState(() => _isSubmitting = true);
     try {
-      final repo = ref.read(communityRepositoryProvider);
-      await repo.createPost(CreatePostRequest(
-        title: _titleController.text.trim(),
-        content: _contentController.text.trim(),
-        route: _selectedRoute!,
-        station: _selectedStation!,
-        issueType: _selectedIssueType!,
-      ));
-      await ref.read(feedProvider.notifier).load();
+      final request = CreatePostRequest(
+        title:         _titleController.text.trim(),
+        content:       _contentController.text.trim(),
+        transportType: _transportTypeToEnum[_selectedTransportType] ?? 'SUBWAY',
+        lineNumber:    _selectedRoute!,
+        stationName:   _selectedStation,
+        issueType:     _issueTypeToEnum[_selectedIssueType] ?? 'ETC',
+      );
+
+      if (_isEditMode) {
+        await ref.read(feedProvider.notifier).updatePost(widget.editPostId!, request);
+      } else {
+        await ref.read(feedProvider.notifier).createPost(request);
+      }
       if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) _showError('저장에 실패했어요. 다시 시도해주세요.');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }

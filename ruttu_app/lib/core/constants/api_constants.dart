@@ -4,6 +4,16 @@ class ApiConstants {
   ApiConstants._();
 
   static String get springBaseUrl => EnvConfig.springBaseUrl;
+
+  // ── WebSocket (STOMP) ────────────────────────────────────────────
+  // StompService가 EnvConfig.springBaseUrl을 직접 참조하므로 여기서는 참고용 문서
+  // 실제 endpoint: ws(s)://<springBaseUrl>/ws
+  // STOMP destinations:
+  //   send  → /app/location/my    (나의 경로 위치 전송)
+  //   send  → /app/location/reco  (추천 경로 위치 전송)
+  //   sub   → /user/queue/location/my   (나의 경로 구간 수신)
+  //   sub   → /user/queue/location/reco (추천 경로 구간 수신)
+  //   sub   → /user/queue/status        (이동 상태 수신)
   static String get fastapiBaseUrl => EnvConfig.fastapiBaseUrl;
 
   // ── 1. Auth ──────────────────────────────────────────────

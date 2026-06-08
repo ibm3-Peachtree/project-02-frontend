@@ -1,170 +1,154 @@
+import 'package:dio/dio.dart';
 import '../models/post_model.dart';
+import '../../core/network/api_client.dart';
+import '../../core/constants/api_constants.dart';
 
+// ── 인터페이스 ─────────────────────────────────────────────────────
 abstract class CommunityRepository {
-  Future<PostSummaryModel?> getHotPost();
-  Future<List<PostSummaryModel>> getFeeds({String? sort, String? route, String? station});
+  /// 게시글 목록 (GET /posts?sort=latest|view)
+  Future<List<PostSummaryModel>> getPosts({String sort});
+
+  /// 내가 쓴 글 (GET /posts/me)
+  Future<List<PostSummaryModel>> getMyPosts();
+
+  /// 게시글 상세 (GET /posts/{postId})
   Future<PostDetailModel> getPostDetail(int postId);
-  Future<List<CommentModel>> getComments(int postId);
-  Future<int> createPost(CreatePostRequest request);
+
+  /// 게시글 작성 (POST /posts, multipart)
+  Future<void> createPost(CreatePostRequest request, {dynamic imageFile});
+
+  /// 게시글 수정 (PUT /posts/{id}, multipart)
+  Future<void> updatePost(int postId, CreatePostRequest request, {dynamic imageFile});
+
+  /// 게시글 삭제 (DELETE /posts/{id})
   Future<void> deletePost(int postId);
+
+  // ── Comment / Report — 백엔드 미구현이므로 인터페이스만 유지 ──
+  Future<List<CommentModel>> getComments(int postId);
   Future<void> createComment(int postId, String content);
   Future<void> deleteComment(int commentId);
   Future<void> reportPost(int postId, String reason);
   Future<void> reportComment(int commentId, String reason);
+
+  // 하위 호환: CommunityScreen 이 hotPost를 요청할 수 있으므로 유지
+  Future<PostSummaryModel?> getHotPost();
 }
 
-class MockCommunityRepository implements CommunityRepository {
-  final List<PostDetailModel> _posts = [
-    PostDetailModel(
-      postId: 1,
-      title: '2호선 강남역 오늘 심하게 지연되네요',
-      content: '오전 9시 기준으로 강남~역삼 구간에서 신호 장애가 발생해 10분 이상 지연되고 있어요. 대체 경로 고려하세요.',
-      route: '2호선',
-      station: '강남역',
-      issueType: '지연',
-      viewCount: 234,
-      createdAt: DateTime.now().subtract(const Duration(minutes: 12)).toIso8601String(),
-    ),
-    PostDetailModel(
-      postId: 2,
-      title: '147번 버스 배차 간격 오늘 이상해요',
-      content: '평소에 10분 간격인데 오늘은 30분 이상 오지 않고 있어요. 파업인지 확인 부탁드려요.',
-      route: '147번',
-      station: '강남역 버스정류장',
-      issueType: '결행',
-      viewCount: 89,
-      createdAt: DateTime.now().subtract(const Duration(hours: 1)).toIso8601String(),
-    ),
-    PostDetailModel(
-      postId: 3,
-      title: '선릉역 2호선 혼잡도 어때요?',
-      content: '오늘 오후 6시 퇴근 시간대 선릉역 혼잡도 정보 아시는 분 계세요?',
-      route: '2호선',
-      station: '선릉역',
-      issueType: '혼잡',
-      viewCount: 45,
-      createdAt: DateTime.now().subtract(const Duration(hours: 3)).toIso8601String(),
-    ),
-  ];
+// ── 실제 API 구현 ──────────────────────────────────────────────────
+class ApiCommunityRepository implements CommunityRepository {
+  const ApiCommunityRepository(this._client);
+  final ApiClient _client;
 
-  final Map<int, List<CommentModel>> _comments = {
-    1: [
-      CommentModel(
-        commentId: 1,
-        content: '저도 지금 막혀서 버스로 갈아탔어요.',
-        createdAt: DateTime.now().subtract(const Duration(minutes: 8)).toIso8601String(),
-      ),
-      CommentModel(
-        commentId: 2,
-        content: '신분당선으로 우회하는 게 빠를 것 같아요.',
-        createdAt: DateTime.now().subtract(const Duration(minutes: 5)).toIso8601String(),
-      ),
-    ],
-    2: [],
-    3: [],
-  };
+  // ── 게시글 목록 ─────────────────────────────────────────────
+  @override
+  Future<List<PostSummaryModel>> getPosts({String sort = 'latest'}) async {
+    final res = await _client.dio.get(
+      ApiConstants.posts,
+      queryParameters: {'sort': sort},
+    );
+    final list = res.data as List<dynamic>;
+    return list
+        .map((e) => PostSummaryModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
 
-  int _nextPostId   = 4;
-  int _nextCommentId = 3;
+  // ── 내가 쓴 글 ──────────────────────────────────────────────
+  @override
+  Future<List<PostSummaryModel>> getMyPosts() async {
+    final res = await _client.dio.get(ApiConstants.myPosts);
+    final list = res.data as List<dynamic>;
+    return list
+        .map((e) => PostSummaryModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
 
+  // ── 게시글 상세 ─────────────────────────────────────────────
+  @override
+  Future<PostDetailModel> getPostDetail(int postId) async {
+    final res = await _client.dio.get(ApiConstants.postById(postId));
+    return PostDetailModel.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  // ── 가장 많이 조회된 글 (목록 중 최다 조회) ─────────────────
   @override
   Future<PostSummaryModel?> getHotPost() async {
-    await Future.delayed(const Duration(milliseconds: 200));
-    if (_posts.isEmpty) return null;
-    final sorted = [..._posts]..sort((a, b) => b.viewCount.compareTo(a.viewCount));
-    final p = sorted.first;
-    return PostSummaryModel(
-      postId: p.postId, title: p.title, route: p.route,
-      station: p.station, viewCount: p.viewCount, createdAt: p.createdAt,
+    final posts = await getPosts(sort: 'view');
+    return posts.isEmpty ? null : posts.first;
+  }
+
+  // ── 게시글 작성 ─────────────────────────────────────────────
+  @override
+  Future<void> createPost(
+    CreatePostRequest request, {
+    dynamic imageFile, // XFile or File
+  }) async {
+    final formData = FormData.fromMap({
+      ...request.toFormFields(),
+      if (imageFile != null)
+        'file': await _toMultipart(imageFile),
+    });
+    await _client.dio.post(
+      ApiConstants.posts,
+      data: formData,
+      options: Options(contentType: 'multipart/form-data'),
     );
   }
 
+  // ── 게시글 수정 ─────────────────────────────────────────────
   @override
-  Future<List<PostSummaryModel>> getFeeds({
-    String? sort, String? route, String? station,
+  Future<void> updatePost(
+    int postId,
+    CreatePostRequest request, {
+    dynamic imageFile,
   }) async {
-    await Future.delayed(const Duration(milliseconds: 300));
-    var list = [..._posts];
-    if (route != null && route.isNotEmpty) {
-      list = list.where((p) => p.route == route).toList();
-    }
-    if (station != null && station.isNotEmpty) {
-      list = list.where((p) => p.station.contains(station)).toList();
-    }
-    if (sort == 'view') {
-      list.sort((a, b) => b.viewCount.compareTo(a.viewCount));
-    } else {
-      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    }
-    return list.map((p) => PostSummaryModel(
-      postId: p.postId, title: p.title, route: p.route,
-      station: p.station, viewCount: p.viewCount, createdAt: p.createdAt,
-    )).toList();
+    final formData = FormData.fromMap({
+      ...request.toFormFields(),
+      if (imageFile != null)
+        'image': await _toMultipart(imageFile),
+    });
+    await _client.dio.put(
+      ApiConstants.postById(postId),
+      data: formData,
+      options: Options(contentType: 'multipart/form-data'),
+    );
   }
 
-  @override
-  Future<PostDetailModel> getPostDetail(int postId) async {
-    await Future.delayed(const Duration(milliseconds: 200));
-    return _posts.firstWhere((p) => p.postId == postId);
-  }
-
-  @override
-  Future<List<CommentModel>> getComments(int postId) async {
-    await Future.delayed(const Duration(milliseconds: 200));
-    return _comments[postId] ?? [];
-  }
-
-  @override
-  Future<int> createPost(CreatePostRequest request) async {
-    await Future.delayed(const Duration(milliseconds: 400));
-    final id = _nextPostId++;
-    _posts.insert(0, PostDetailModel(
-      postId: id,
-      title: request.title,
-      content: request.content,
-      route: request.route,
-      station: request.station,
-      issueType: request.issueType,
-      viewCount: 0,
-      createdAt: DateTime.now().toIso8601String(),
-    ));
-    _comments[id] = [];
-    return id;
-  }
-
+  // ── 게시글 삭제 ─────────────────────────────────────────────
   @override
   Future<void> deletePost(int postId) async {
-    await Future.delayed(const Duration(milliseconds: 300));
-    _posts.removeWhere((p) => p.postId == postId);
-    _comments.remove(postId);
+    await _client.dio.delete(ApiConstants.postById(postId));
   }
 
+  // ── Comment — 백엔드 미구현: 빈 응답 반환 ───────────────────
   @override
-  Future<void> createComment(int postId, String content) async {
-    await Future.delayed(const Duration(milliseconds: 300));
-    _comments.putIfAbsent(postId, () => []);
-    _comments[postId]!.add(CommentModel(
-      commentId: _nextCommentId++,
-      content: content,
-      createdAt: DateTime.now().toIso8601String(),
-    ));
-  }
+  Future<List<CommentModel>> getComments(int postId) async => [];
 
   @override
-  Future<void> deleteComment(int commentId) async {
-    await Future.delayed(const Duration(milliseconds: 200));
-    for (final list in _comments.values) {
-      list.removeWhere((c) => c.commentId == commentId);
+  Future<void> createComment(int postId, String content) async {}
+
+  @override
+  Future<void> deleteComment(int commentId) async {}
+
+  // ── Report — 백엔드 미구현 ───────────────────────────────────
+  @override
+  Future<void> reportPost(int postId, String reason) async {}
+
+  @override
+  Future<void> reportComment(int commentId, String reason) async {}
+
+  // ── 헬퍼: XFile/File → MultipartFile ────────────────────────
+  Future<MultipartFile> _toMultipart(dynamic file) async {
+    // image_picker XFile
+    try {
+      final bytes = await (file as dynamic).readAsBytes() as List<int>;
+      final name  = (file.name as String?) ?? 'image.jpg';
+      return MultipartFile.fromBytes(bytes, filename: name);
+    } catch (_) {
+      // dart:io File fallback
+      return MultipartFile.fromFileSync(
+        (file as dynamic).path as String,
+        filename: 'image.jpg',
+      );
     }
-  }
-
-  @override
-  Future<void> reportPost(int postId, String reason) async {
-    await Future.delayed(const Duration(milliseconds: 200));
-  }
-
-  @override
-  Future<void> reportComment(int commentId, String reason) async {
-    await Future.delayed(const Duration(milliseconds: 200));
   }
 }

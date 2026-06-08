@@ -232,7 +232,49 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
           (serverMessage.contains('동일 이름') ||
            serverMessage.contains('DuplicateRoutineName'));
 
-      if (isDuplicateTime) {
+      final isRoutineInUse = e.response?.statusCode == 409 &&
+          (serverMessage.contains('RoutineInUse') ||
+           serverMessage.contains('사용 중') ||
+           serverMessage.contains('in_use') ||
+           serverMessage.contains('routine_in_use'));
+
+      if (isRoutineInUse) {
+        await showDialog<void>(
+          context: context,
+          builder: (dCtx) => AlertDialog(
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16)),
+            title: const Row(
+              children: [
+                Icon(Icons.lock_outline_rounded,
+                    color: AppColors.primary, size: 22),
+                SizedBox(width: 8),
+                Text('루틴을 수정할 수 없어요',
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w700)),
+              ],
+            ),
+            content: const Text(
+              '현재 이동 중인 루틴은 수정할 수 없어요.\n이동이 완료된 후 다시 시도해 주세요.',
+              style: TextStyle(
+                  fontSize: 14,
+                  height: 1.6,
+                  color: AppColors.textSecondary),
+            ),
+            actions: [
+              ElevatedButton(
+                onPressed: () => Navigator.pop(dCtx),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10))),
+                child: const Text('확인',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        );
+      } else if (isDuplicateTime) {
         final days = _selectedDays.map((d) {
           const map = {
             'MON': '월', 'TUE': '화', 'WED': '수',
@@ -272,12 +314,25 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
       } else if (isDuplicateName) {
         // Step 1으로 이동해서 이름 필드 포커스
         setState(() => _step = 0);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('이미 사용 중인 루틴 이름이에요. 다른 이름을 입력해주세요.'),
-            backgroundColor: AppColors.error,
-          ),
-        );
+        if (mounted) {
+          await showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Text(
+                '이름 중복',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              ),
+              content: const Text('이미 사용 중인 루틴 이름이에요.\n다른 이름을 입력해주세요.'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('확인'),
+                ),
+              ],
+            ),
+          );
+        }
       } else {
         // 보안상 서버 에러 상세 코드/메시지 노출 방지
         ScaffoldMessenger.of(context).showSnackBar(
@@ -982,49 +1037,80 @@ class _AddressPickerField extends ConsumerWidget {
   void _showPicker(BuildContext context, WidgetRef ref) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (sheetCtx) {
         final bottomPad = MediaQuery.of(sheetCtx).viewPadding.bottom;
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-              child: Text('$label 선택',
-                  style: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.w700)),
-            ),
-            ...addresses.map((a) => ListTile(
-                  leading: const Icon(Icons.location_on_outlined,
-                      color: AppColors.primary),
-                  title: Text(a.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(a.address),
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    onSelect(a);
-                  },
-                )),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.add_location_alt_outlined,
-                  color: AppColors.primary),
-              title: const Text('새 주소 추가',
-                  style: TextStyle(
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w600)),
-              onTap: () async {
-                final newAddr = await _showAddAddressSheet(sheetCtx, ref);
-                if (newAddr != null && sheetCtx.mounted) {
-                  Navigator.pop(sheetCtx);
-                  onSelect(newAddr);
-                }
-              },
-            ),
-            SizedBox(height: 8 + bottomPad),
-          ],
+        // 항목 수에 따라 초기 높이를 동적으로 설정 (최소 0.4, 최대 0.85)
+        final itemCount = addresses.length + 2; // 헤더 + 목록 + 새 주소 추가
+        final estimatedHeight = itemCount * 72.0 + 80;
+        final screenHeight = MediaQuery.of(sheetCtx).size.height;
+        final initialSize = (estimatedHeight / screenHeight).clamp(0.4, 0.85);
+
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: initialSize,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          builder: (_, scrollController) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 드래그 핸들
+              Center(
+                child: Container(
+                  width: 40, height: 4,
+                  margin: const EdgeInsets.only(top: 12, bottom: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+                child: Text('$label 선택',
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w700)),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView(
+                  controller: scrollController,
+                  padding: EdgeInsets.only(bottom: bottomPad),
+                  children: [
+                    ...addresses.map((a) => ListTile(
+                          leading: const Icon(Icons.location_on_outlined,
+                              color: AppColors.primary),
+                          title: Text(a.name,
+                              style: const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text(a.address),
+                          onTap: () {
+                            Navigator.pop(sheetCtx);
+                            onSelect(a);
+                          },
+                        )),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.add_location_alt_outlined,
+                          color: AppColors.primary),
+                      title: const Text('새 주소 추가',
+                          style: TextStyle(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600)),
+                      onTap: () async {
+                        final newAddr = await _showAddAddressSheet(sheetCtx, ref);
+                        if (newAddr != null && sheetCtx.mounted) {
+                          Navigator.pop(sheetCtx);
+                          onSelect(newAddr);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         );
       },
     );

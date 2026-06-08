@@ -66,10 +66,6 @@ class _BriefingScreenState extends ConsumerState<BriefingScreen> {
                 _AiSummaryCard(summary: state.aiSummary),
                 const SizedBox(height: 12),
 
-                // ② 교통 이슈 카드
-                _TrafficIssueCard(issues: state.issues),
-                const SizedBox(height: 12),
-
                 // ③ 날씨 카드
                 if (state.briefingWeather != null)
                   _BriefingWeatherCard(weather: state.briefingWeather!)
@@ -90,10 +86,6 @@ class _BriefingScreenState extends ConsumerState<BriefingScreen> {
                 ),
                 const SizedBox(height: 12),
 
-                // ⑥ 미팅 경로 카드
-                if (state.meetingRoute != null)
-                  _MeetingRouteCard(route: state.meetingRoute!),
-                if (state.meetingRoute != null) const SizedBox(height: 12),
               ],
             ),
     );
@@ -422,6 +414,7 @@ class _ScheduleCard extends StatelessWidget {
   Widget build(BuildContext context) {
     // 일정이 있는 그룹만 필터 (일정 없는 캘린더도 칩은 표시)
     final hasAnyEvent = calendarGroups.any((g) => g.items.isNotEmpty);
+    final hasError = calendarError != null;
 
     return Card(
       child: Padding(
@@ -443,23 +436,36 @@ class _ScheduleCard extends StatelessWidget {
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                 ),
                 const Spacer(),
+                // 에러 여부에 따라 배지 색상/아이콘/문구 변경
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.1),
+                    color: hasError
+                        ? Colors.orange.withValues(alpha: 0.1)
+                        : Colors.green.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: hasError
+                          ? Colors.orange.withValues(alpha: 0.4)
+                          : Colors.green.withValues(alpha: 0.3),
+                    ),
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.check_circle_outline, size: 12, color: Colors.green),
-                      SizedBox(width: 4),
+                      Icon(
+                        hasError
+                            ? Icons.sync_problem_outlined
+                            : Icons.check_circle_outline,
+                        size: 12,
+                        color: hasError ? Colors.orange : Colors.green,
+                      ),
+                      const SizedBox(width: 4),
                       Text(
-                        'Google Calendar 연동됨',
+                        hasError ? '일정 불러오기 실패' : 'Google Calendar 연동됨',
                         style: TextStyle(
                           fontSize: 11,
-                          color: Colors.green,
+                          color: hasError ? Colors.orange : Colors.green,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -470,22 +476,32 @@ class _ScheduleCard extends StatelessWidget {
             ),
 
             // ── 에러 ──
-            if (calendarError != null) ...[
+            if (hasError) ...[
               const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(8),
+                  color: const Color(0xFFFFF8F0),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.35)),
                 ),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.error_outline, color: Colors.red, size: 16),
-                    const SizedBox(width: 8),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 1),
+                      child: Icon(Icons.info_outline_rounded,
+                          color: Colors.orange, size: 18),
+                    ),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        '캘린더를 불러오지 못했어요.\n$calendarError',
-                        style: const TextStyle(fontSize: 13, color: Colors.red),
+                        calendarError!,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF7C4A00),
+                          height: 1.5,
+                        ),
                       ),
                     ),
                   ],
