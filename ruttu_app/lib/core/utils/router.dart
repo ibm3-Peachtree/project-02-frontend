@@ -22,6 +22,9 @@ import '../../features/auth/providers/auth_state.dart';
 import '../../features/auth/providers/network_provider.dart';
 import '../constants/route_constants.dart';
 import '../widgets/main_scaffold.dart';
+import '../../features/home/screens/reco_live_route_screen.dart';
+
+final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authListenable = ValueNotifier<int>(0);
@@ -40,6 +43,7 @@ final routerProvider = Provider<GoRouter>((ref) {
   });
 
   return GoRouter(
+    navigatorKey: _rootNavigatorKey,
     initialLocation: RouteConstants.splash,
     refreshListenable: authListenable,
     redirect: (context, state) {
@@ -154,6 +158,21 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: RouteConstants.accountDeleted,
         builder: (context, state) => const AccountDeletedScreen(),
+      ),
+
+      // 추천 경로 실시간 안내 — ShellRoute 바깥, 바텀 네비 없이 rootNavigator overlay로 열림
+      GoRoute(
+        path: RouteConstants.recoLiveRoute,
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) {
+          final extra = state.extra as Map<String, dynamic>? ?? {};
+          final recoId = extra['recoId'] as int? ?? 0;
+          final isDetour = extra['isDetour'] as bool? ?? false;
+          return RecoLiveRouteScreen(
+            recoId: recoId,
+            isDetour: isDetour,
+          );
+        },
       ),
 
       // ─────────────────────────────────────────────────────────────────────

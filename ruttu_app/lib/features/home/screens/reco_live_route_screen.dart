@@ -20,18 +20,11 @@ class RecoLiveRouteScreen extends ConsumerStatefulWidget {
   /// 우회 경로 선택 시 true. pathId == recoId로 전달됨.
   /// true이면 initDetour(recoId), false이면 init(recoId) 호출.
   final bool isDetour;
-  /// true이면 탭 내부 인라인 표시 — Scaffold/SafeArea를 사용하지 않음.
-  /// false(기본)이면 Navigator.push로 전체 화면 표시.
-  final bool isInline;
-  /// 인라인 모드에서 종료 시 호출할 콜백.
-  final VoidCallback? onStop;
 
   const RecoLiveRouteScreen({
     super.key,
     required this.recoId,
     this.isDetour = false,
-    this.isInline = false,
-    this.onStop,
   });
 
   @override
@@ -323,10 +316,6 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
     );
 
     // 인라인 모드: Scaffold/SafeArea 없이 그대로 반환
-    if (widget.isInline) {
-      return body;
-    }
-
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(child: body),
@@ -460,13 +449,7 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
       satRouteScore: result == true ? routeScore : null,
     );
     if (!mounted) return;
-    // 인라인 모드: onStop 콜백으로 상위(recoRouteProvider)에 종료 신호
-    // 전체 화면 모드: Navigator.pop으로 화면 닫기
-    if (widget.isInline) {
-      widget.onStop?.call();
-    } else {
-      Navigator.of(context).pop();
-    }
+    Navigator.of(context).pop();
   }
 }
 

@@ -310,6 +310,8 @@ class _RecoRouteTab extends ConsumerStatefulWidget {
 }
 
 class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
+  bool _hasLaunched = false;
+
   @override
   void initState() {
     super.initState();
@@ -361,18 +363,38 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
     // provider 생성 타이밍 문제로 첫 수신이 누락될 수 있으므로 이중 안전장치로 watch.
     ref.watch(incidentDetourProvider);
 
-    // ── 이동 중 (경로 변경 완료) → RecoLiveRouteScreen 인라인 표시
-    // Navigator.push 대신 탭 내부에서 표시하여 바텀 네비게이션 유지
-    if (state.isActive) {
+    // ── 이동 중 (경로 변경 완료) → RecoLiveRouteScreen을 rootNavigator overlay로 push
+    // 바텀 네비게이션 위로 전체 화면 오버레이되어 표시됨
+    if (state.isActive && !_hasLaunched) {
+      _hasLaunched = true;
       final activeRecoId = state.selectedRecoId ?? state.selectedDetourPathId ?? 0;
       final isDetour = state.selectedDetourPathId != null;
-      return RecoLiveRouteScreen(
-        key: ValueKey('inline_reco_live_$activeRecoId'),
-        recoId: activeRecoId,
-        isDetour: isDetour,
-        isInline: true,
-        onStop: () => ref.read(recoRouteProvider.notifier).stopRecoRoute(),
-      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context, rootNavigator: true)
+            .push(
+          MaterialPageRoute<void>(
+            builder: (_) => RecoLiveRouteScreen(
+              key: ValueKey('reco_live_$activeRecoId'),
+              recoId: activeRecoId,
+              isDetour: isDetour,
+            ),
+          ),
+        )
+            .then((_) {
+          if (mounted) {
+            setState(() => _hasLaunched = false);
+            ref.read(recoRouteProvider.notifier).stopRecoRoute();
+          }
+        });
+      });
+    }
+
+    // isActive が false になったら _hasLaunched をリセット
+    if (!state.isActive && _hasLaunched) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _hasLaunched = false);
+      });
     }
 
     // ✅ 버그 수정: "이 경로로 변경" 클릭 후 저장/로딩 중 상태 처리

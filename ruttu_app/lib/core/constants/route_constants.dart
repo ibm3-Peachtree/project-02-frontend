@@ -21,4 +21,5 @@ class RouteConstants {
   static const myCommunityActivity = '/mypage/community-activity';
   static const accountManage = '/mypage/account';
   static const accountDeleted = '/account-deleted';
+  static const recoLiveRoute = '/reco-live-route';
 }

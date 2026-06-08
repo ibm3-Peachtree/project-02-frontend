@@ -432,6 +432,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
       }
     }
 
+    if (!mounted) return;
+
     final myStepIdx = (mySection != null && state.myRoute != null)
         ? _resolvePathIndex(mySection, state.myRoute!.path.length)
         : state.myStepIndex;
