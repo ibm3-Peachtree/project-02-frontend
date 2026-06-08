@@ -71,11 +71,11 @@ class MyRouteNotifier extends StateNotifier<MyRouteState> {
   final HomeRepository _repo;
   final StompService _stomp = StompService.instance;
 
-  Future<void> loadMyRoute() async {
+  Future<void> loadMyRoute(int routineId) async {
     if (state.route != null || state.isRouteLoading) return;
     state = state.copyWith(isRouteLoading: true, clearError: true);
     try {
-      final route = await _repo.getMyRoute();
+      final route = await _repo.getMyRoute(routineId);
       state = state.copyWith(route: route, isRouteLoading: false);
     } catch (e) {
       state = state.copyWith(
@@ -220,10 +220,17 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
 
   /// homeProvider.initialize()에서 이미 받아온 데이터를 직접 주입.
   /// API 중복 호출 없이 즉시 state를 채운다.
-  void preloadList(RecoRouteListResponse resp) {
+  /// 루틴 교체 시 이전 루틴의 추천/우회 경로 목록을 초기화.
+  /// initializeWithRoutine() 호출 직전에 사용하여 새 데이터가 정상 주입되도록 보장.
+  void resetList() {
+    state = const RecoRouteState();
+  }
+
+  void preloadList(RecoRouteListResponse resp, {bool force = false}) {
     // recoList 또는 detourList(REST)가 이미 있으면 무시.
     // detourModelList(STOMP)만 있는 경우에는 recoList를 주입 허용.
-    if (state.recoList.isNotEmpty || state.detourList.isNotEmpty) return;
+    // force=true(initializeWithRoutine 등 루틴 교체 시)이면 기존 데이터를 덮어씀.
+    if (!force && (state.recoList.isNotEmpty || state.detourList.isNotEmpty)) return;
     state = state.copyWith(
       recoList:        resp.recoList,
       detourList:      resp.detourList,
@@ -232,7 +239,7 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
     );
   }
 
-  Future<void> loadRecoRouteList({bool force = false}) async {
+  Future<void> loadRecoRouteList(int routineId, {bool force = false}) async {
     if (state.isRouteLoading) return;
     if (state.isActive) return;
     // recoList 또는 detourList(REST)가 이미 있으면 스킵.
@@ -242,7 +249,7 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
 
     state = state.copyWith(isRouteLoading: true, clearError: true);
     try {
-      final resp = await _repo.getRecoRouteListResponse();
+      final resp = await _repo.getRecoRouteListResponse(routineId);
       state = state.copyWith(
         recoList:        resp.recoList,
         detourList:      resp.detourList,

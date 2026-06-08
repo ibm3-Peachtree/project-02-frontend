@@ -231,7 +231,7 @@ class _NicknameEditSheetState extends State<_NicknameEditSheet> {
                         _errorText = null;
                       });
                       final success =
-                          await widget.ref.read(authProvider.notifier).setNickname(name);
+                          await widget.ref.read(authProvider.notifier).setNickname(name, isFirstSetup: false);
                       if (!mounted) return;
                       if (success) {
                         Navigator.pop(context);

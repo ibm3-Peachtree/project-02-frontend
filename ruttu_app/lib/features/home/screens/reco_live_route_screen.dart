@@ -20,11 +20,18 @@ class RecoLiveRouteScreen extends ConsumerStatefulWidget {
   /// 우회 경로 선택 시 true. pathId == recoId로 전달됨.
   /// true이면 initDetour(recoId), false이면 init(recoId) 호출.
   final bool isDetour;
+  /// true이면 탭 내부 인라인 표시 — Scaffold/SafeArea를 사용하지 않음.
+  /// false(기본)이면 Navigator.push로 전체 화면 표시.
+  final bool isInline;
+  /// 인라인 모드에서 종료 시 호출할 콜백.
+  final VoidCallback? onStop;
 
   const RecoLiveRouteScreen({
     super.key,
     required this.recoId,
     this.isDetour = false,
+    this.isInline = false,
+    this.onStop,
   });
 
   @override
@@ -216,7 +223,7 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
           next.currentSection != prev?.currentSection) {
         _updateCurrentMarker(next.currentSection!);
       }
-      // routeDetail이 처음 도착했을 때 지도 그리기
+      // routeDetail이 처음 도착했을 때 지도 그리기 + 정거장 모두 펼치기
       // (_pendingDraw: 지도가 먼저 준비됐지만 데이터가 없었던 경우)
       if (prev?.routeDetail == null && next.routeDetail != null) {
         final ctrl = _mapController;
@@ -227,46 +234,75 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
           // 지도 자체가 아직 준비 안 됨 — _onMapReady에서 처리됨
           _pendingDraw = true;
         }
+        // 정거장이 있는 경로를 모두 펼친 상태로 초기화
+        setState(() {
+          for (int i = 0; i < next.routeDetail!.path.length; i++) {
+            final path = next.routeDetail!.path[i];
+            if (path.stationName.isNotEmpty && !path.isWalking) {
+              _expandedStops[i] = true;
+            }
+          }
+        });
       }
     });
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // ── 상단 알림 배너 (현재 구간 정보) ─────────────────────────
-            if (state.currentSection != null)
-              _AlertBanner(currentSection: state.currentSection!),
+    final body = Column(
+      children: [
+        // ── 상단 알림 배너 (현재 구간 정보) ─────────────────────────
+        if (state.currentSection != null)
+          _AlertBanner(currentSection: state.currentSection!),
 
-            // ── 네이버 지도 ───────────────────────────────────────────────
-            SizedBox(
-              height: 220,
-              child: Stack(
-                children: [
-                  NaverMap(
-                    key: const ValueKey('reco_live_map'),
-                    options: const NaverMapViewOptions(
-                      initialCameraPosition: NCameraPosition(
-                        target: NLatLng(37.5665, 126.9780),
-                        zoom: 14,
-                      ),
-                      mapType: NMapType.basic,
-                      activeLayerGroups: [NLayerGroup.transit],
-                    ),
-                    onMapReady: _onMapReady,
+        // ── 네이버 지도 ───────────────────────────────────────────────
+        SizedBox(
+          height: 220,
+          child: Stack(
+            children: [
+              NaverMap(
+                key: const ValueKey('reco_live_map'),
+                options: const NaverMapViewOptions(
+                  initialCameraPosition: NCameraPosition(
+                    target: NLatLng(37.5665, 126.9780),
+                    zoom: 14,
                   ),
-                  // 현위치 버튼
+                  mapType: NMapType.basic,
+                  activeLayerGroups: [NLayerGroup.transit],
+                ),
+                onMapReady: _onMapReady,
+              ),
+                  // 줌 / 현위치 버튼
                   Positioned(
                     right: 10,
                     bottom: 10,
-                    child: _MapButton(
-                      icon: Icons.my_location,
-                      onTap: () {
-                        if (_mapController != null) {
-                          _moveToCurrentLocation(_mapController!);
-                        }
-                      },
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _MapButton(
+                          icon: Icons.add,
+                          onTap: () async {
+                            if (_mapController != null) {
+                              await _mapController!.updateCamera(NCameraUpdate.zoomIn());
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 6),
+                        _MapButton(
+                          icon: Icons.remove,
+                          onTap: () async {
+                            if (_mapController != null) {
+                              await _mapController!.updateCamera(NCameraUpdate.zoomOut());
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 6),
+                        _MapButton(
+                          icon: Icons.my_location,
+                          onTap: () {
+                            if (_mapController != null) {
+                              _moveToCurrentLocation(_mapController!);
+                            }
+                          },
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -284,8 +320,16 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
               onTap: () => _showFeedbackDialog(context),
             ),
           ],
-        ),
-      ),
+    );
+
+    // 인라인 모드: Scaffold/SafeArea 없이 그대로 반환
+    if (widget.isInline) {
+      return body;
+    }
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: SafeArea(child: body),
     );
   }
 
@@ -306,6 +350,7 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    _ensureExpandedStops(state);
     return _RouteBody(
       routeDetail: state.routeDetail!,
       currentSection: state.currentSection,
@@ -314,6 +359,22 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
         _expandedStops[i] = !(_expandedStops[i] ?? false);
       }),
     );
+  }
+
+  /// routeDetail이 처음 렌더될 때 _expandedStops가 비어있으면 모두 펼침
+  void _ensureExpandedStops(RecoLiveRouteState state) {
+    if (_expandedStops.isNotEmpty) return;
+    final detail = state.routeDetail;
+    if (detail == null) return;
+    bool changed = false;
+    for (int i = 0; i < detail.path.length; i++) {
+      final path = detail.path[i];
+      if (path.stationName.isNotEmpty && !path.isWalking) {
+        _expandedStops[i] = true;
+        changed = true;
+      }
+    }
+    if (changed) setState(() {});
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -398,7 +459,14 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
       satEtaScore: result == true ? etaScore : null,
       satRouteScore: result == true ? routeScore : null,
     );
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+    // 인라인 모드: onStop 콜백으로 상위(recoRouteProvider)에 종료 신호
+    // 전체 화면 모드: Navigator.pop으로 화면 닫기
+    if (widget.isInline) {
+      widget.onStop?.call();
+    } else {
+      Navigator.of(context).pop();
+    }
   }
 }
 
@@ -604,29 +672,24 @@ class _RouteBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── 대기중 상태 칩 ────────────────────────────────────────────
-          _StatusChip(currentSection: currentSection),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── 고정 영역: 상태 칩 + 진행 단계 + ETA ─────────────────────────
+        _StatusChip(currentSection: currentSection),
+        _ProgressStepBar(
+          path: routeDetail.path,
+          currentSection: currentSection,
+        ),
+        _EtaRow(totalTime: routeDetail.totalTime),
+        const Divider(height: 1, color: Color(0xFFEEEEEE)),
 
-          // ── 진행 단계 표시 (이미지3 상단 step bar) ───────────────────
-          _ProgressStepBar(
-            path: routeDetail.path,
-            currentSection: currentSection,
-          ),
-
-          // ── 예상 도착 + 종료 버튼 행 ──────────────────────────────────
-          _EtaRow(totalTime: routeDetail.totalTime),
-
-          const Divider(height: 1, color: Color(0xFFEEEEEE)),
-
-          // ── 경로 단계 목록 (이미지3 하단 리스트) ─────────────────────
-          Padding(
+        // ── 스크롤 영역: 경로 단계 목록 ──────────────────────────────────
+        Expanded(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: routeDetail.path.asMap().entries.map((e) {
                 final isLast = e.key == routeDetail.path.length - 1;
                 final isCurrent = _isCurrentPath(e.key, e.value);
@@ -641,8 +704,8 @@ class _RouteBody extends StatelessWidget {
               }).toList(),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -650,13 +713,27 @@ class _RouteBody extends StatelessWidget {
     final section = currentSection;
     if (section == null) return false;
     final groups = section.groupedSections;
-    final curGroup = groups.firstWhere(
+
+    // path 배열과 groupedSections 배열을 순서 기반으로 매핑.
+    // 두 배열의 크기가 다를 수 있으므로 index가 범위 내인지 확인.
+    if (index >= groups.length) return false;
+
+    // 현재 idx가 속한 groupedSection을 찾고, 그게 path[index]와 일치하는지 확인.
+    final curGroupIdx = groups.indexWhere(
       (g) => section.idx >= g.startIdx && section.idx <= g.endIdx,
-      orElse: () => const GroupedSection(typeKey: '', startIdx: 0, endIdx: 0),
     );
-    if (curGroup.typeKey.isEmpty) return false;
+    // 현재 group이 path[index]에 해당하는지 순서로 판단
+    if (curGroupIdx != index) return false;
+
+    final curGroup = groups[curGroupIdx];
     if (path.isWalking && curGroup.isWalk) return true;
-    if (path.isBus && curGroup.isBus && path.busNumbers.contains(curGroup.busNo)) return true;
+    if (path.isBus && curGroup.isBus) {
+      // 버스 번호 비교 (busNumbers는 no 배열, busNo는 typeKey 파싱)
+      final busNo = curGroup.busNo ?? '';
+      return path.busNumbers.contains(busNo) ||
+          path.busNumbers.any((n) => n.replaceAll(RegExp(r'[^0-9]'), '') ==
+              busNo.replaceAll(RegExp(r'[^0-9]'), ''));
+    }
     if (path.isSubway && curGroup.isSubway) return true;
     return false;
   }

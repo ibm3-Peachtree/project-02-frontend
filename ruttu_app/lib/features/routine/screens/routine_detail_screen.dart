@@ -144,11 +144,27 @@ class _RoutineDetailBody extends ConsumerWidget {
                   return;
                 }
 
-                // 오늘 루틴이면 홈 화면으로 이동 후 startRoute() 호출
+                // ✅ [버그 수정] 오늘 루틴이면 이 루틴을 activeRoutine으로 명시 지정 후 출발.
+                // 기존 방식(homeProvider.startRoute() 바로 호출)은 homeProvider의
+                // activeRoutine이 이미 다른 루틴이거나 null일 때 동작하지 않는 문제가 있었음.
+                // initializeWithRoutine()으로 현재 루틴을 homeProvider에 세팅한 뒤
+                // startRoute()를 호출하여 루틴 2개 이상일 때도 정상 동작하도록 수정.
+                if (!context.mounted) return;
+
+                // ✅ [버그 수정] context.go() 보다 먼저 initializeWithRoutine()을 완료해야 함.
+                // 기존 코드는 go() 후 await를 했기 때문에, 홈 화면의 _RecoRouteTab.initState()가
+                // preloadList() 완료 전에 loadRecoRouteList()를 독자 호출하여
+                // 추천 경로 탭에 데이터가 반영되지 않는 문제가 있었음.
+                // homeProvider에 이 루틴을 activeRoutine으로 지정 (recoRouteList preload 포함)
+                await ref.read(homeProvider.notifier).initializeWithRoutine(routine);
+
                 if (!context.mounted) return;
                 context.go(RouteConstants.home);
-                await Future.delayed(const Duration(milliseconds: 300));
-                ref.read(homeProvider.notifier).startRoute();
+
+                // activeRoutine이 정상 세팅된 경우에만 출발
+                if (ref.read(homeProvider).activeRoutine != null) {
+                  ref.read(homeProvider.notifier).startRoute();
+                }
               },
               child: const Text('지금 출발하기'),
             ),
@@ -172,7 +188,7 @@ class _RoutineDetailBody extends ConsumerWidget {
               title: const Text('루틴 삭제',
                   style: TextStyle(color: AppColors.error)),
               onTap: () async {
-                // 바텀시트를 먼저 닫고, 아닫히면 닫힬 전에 context가 심하는 검은 화면 출현
+                // 바텀시트를 먼저 닫고, 아닫히면 닫힐 전에 context가 심하는 검은 화면 출현
                 Navigator.pop(sheetCtx);
                 // 바텀시트 팝업 애니메이션이 완료된 후 다이얼로그 열기
                 await Future.delayed(const Duration(milliseconds: 300));
@@ -374,9 +390,9 @@ class _RouteDetailCard extends StatelessWidget {
           const Divider(height: 1, thickness: 1, color: AppColors.border),
           // 경로 단계 목록 (중첩 컨테이너 제거 — 바깥 Card가 이미 radius 처리)
           if (paths.isEmpty)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: const Text('경로 정보가 없습니다.',
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('경로 정보가 없습니다.',
                   style: TextStyle(color: AppColors.textSecondary)),
             )
           else
@@ -432,15 +448,15 @@ class _RouteDetailFallback extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              child: const Text('경로 상세',
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Text('경로 상세',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
             ),
             const Divider(height: 1, thickness: 1, color: AppColors.border),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: const Text('경로 정보를 불러올 수 없어요.',
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('경로 정보를 불러올 수 없어요.',
                   style: TextStyle(color: AppColors.textSecondary)),
             ),
           ],

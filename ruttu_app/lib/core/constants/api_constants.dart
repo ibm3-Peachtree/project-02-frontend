@@ -43,10 +43,18 @@ class ApiConstants {
 
   // ── 6. Live Routine ──────────────────────────────────────
   static const liveStatus              = '/me/routines/active/status';
-  static const liveMyRoute             = '/me/routines/active/route';
-  static const liveRecoRoute           = '/me/routines/active/reco';
-  static const liveRecoRouteList       = '/me/routines/active/reco';           // GET  — 추천 경로 목록
-  static String liveRecoSave(int recoId) => '/me/routines/active/reco/$recoId'; // POST — 추천 경로 저장
+  // GET /me/routines/active/route/{routineId}
+  static String liveMyRoute(int routineId) => '/me/routines/active/route/$routineId';
+  // GET /me/routines/active/reco/{routineId}
+  static String liveRecoRouteList(int routineId) => '/me/routines/active/reco/$routineId';
+  // POST /me/routines/active/reco/detail/{recoId}
+  static String liveRecoSave(int recoId) => '/me/routines/active/reco/detail/$recoId';
+  // GET /me/routines/active/reco/detail/{recoId} — 추천 경로 상세
+  static String liveRecoRouteDetail(int recoId) => '/me/routines/active/reco/detail/$recoId';
+  // GET /me/routines/active/reco/detour/{pathId}
+  static String liveRecoDetourDetail(int pathId) => '/me/routines/active/reco/detour/$pathId';
+  // POST /me/routines/active/reco/detour/{pathId}
+  static String liveDetourSave(int pathId) => '/me/routines/active/reco/detour/$pathId';
   static const liveCurrentSection      = '/me/routines/active/location/my';
   static const liveCurrentSectionReco  = '/me/routines/active/location/reco';
   // PATCH /me/routines/active — LiveLocationController 실제 endpoint

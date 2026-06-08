@@ -192,22 +192,32 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   /// PATCH /users/nickname
   /// PATCH /users/nickname
-  Future<bool> setNickname(String nickname) async {
+  Future<bool> setNickname(String nickname, {bool isFirstSetup = true}) async {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       await _repository.updateNickname(nickname);
       // 닉네임 변경 후 서버에서 최신 정보 재조회 (실제 서버 값 반영)
       try {
         final user = await _repository.getMyInfo();
-        // 닉네임 설정 완료 → 온보딩으로 (최초 가입 흐름)
-        state = AuthState(status: AuthStatus.needsOnboarding, user: user);
+        if (isFirstSetup) {
+          // 최초 가입 닉네임 설정 → 온보딩으로
+          state = AuthState(status: AuthStatus.needsOnboarding, user: user);
+        } else {
+          // 마이페이지 닉네임 수정 → 현재 인증 상태 유지, 유저 정보만 갱신
+          state = state.copyWith(isLoading: false, user: user);
+        }
       } catch (_) {
         // getMyInfo 실패 시 로컬 캐시로 UI 즉시 갱신
         final cached = await _repository.getCachedUser();
-        state = AuthState(
-          status: AuthStatus.needsOnboarding,
-          user: cached?.copyWith(nickname: nickname),
-        );
+        final updatedUser = cached?.copyWith(nickname: nickname);
+        if (isFirstSetup) {
+          state = AuthState(
+            status: AuthStatus.needsOnboarding,
+            user: updatedUser,
+          );
+        } else {
+          state = state.copyWith(isLoading: false, user: updatedUser);
+        }
       }
       return true;
     } catch (e) {

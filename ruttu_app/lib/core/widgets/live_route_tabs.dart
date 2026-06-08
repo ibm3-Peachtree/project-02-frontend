@@ -112,6 +112,8 @@ class _LiveRouteTabsState extends ConsumerState<LiveRouteTabs> {
       children: [
         _TabBar(
           currentTab: tab,
+          myRouteActive: myState.isActive,
+          recoRouteActive: ref.watch(recoRouteProvider).isActive,
           onTabChanged: (t) =>
               ref.read(selectedRouteTabProvider.notifier).state = t,
         ),
@@ -142,10 +144,17 @@ class _LiveRouteTabsState extends ConsumerState<LiveRouteTabs> {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class _TabBar extends StatelessWidget {
-  const _TabBar({required this.currentTab, required this.onTabChanged});
+  const _TabBar({
+    required this.currentTab,
+    required this.onTabChanged,
+    this.myRouteActive = false,
+    this.recoRouteActive = false,
+  });
 
   final RouteTab currentTab;
   final void Function(RouteTab) onTabChanged;
+  final bool myRouteActive;
+  final bool recoRouteActive;
 
   @override
   Widget build(BuildContext context) {
@@ -154,13 +163,17 @@ class _TabBar extends StatelessWidget {
         _TabChip(
           label: '나의 경로',
           isSelected: currentTab == RouteTab.my,
-          onTap: () => onTabChanged(RouteTab.my),
+          // 추천 경로가 활성 중이면 나의 경로 탭 비활성화
+          disabled: recoRouteActive,
+          onTap: recoRouteActive ? null : () => onTabChanged(RouteTab.my),
         ),
         const SizedBox(width: 8),
         _TabChip(
           label: '추천 경로',
           isSelected: currentTab == RouteTab.reco,
-          onTap: () => onTabChanged(RouteTab.reco),
+          // 나의 경로가 활성 중이면 추천 경로 탭 비활성화
+          disabled: myRouteActive,
+          onTap: myRouteActive ? null : () => onTabChanged(RouteTab.reco),
         ),
       ],
     );
@@ -171,31 +184,39 @@ class _TabChip extends StatelessWidget {
   const _TabChip({
     required this.label,
     required this.isSelected,
-    required this.onTap,
+    this.onTap,
+    this.disabled = false,
   });
 
   final String label;
   final bool isSelected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool disabled;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: disabled ? null : onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary : AppColors.surface,
+          color: disabled
+              ? AppColors.surface.withOpacity(0.5)
+              : (isSelected ? AppColors.primary : AppColors.surface),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isSelected ? AppColors.primary : AppColors.border,
+            color: disabled
+                ? AppColors.border.withOpacity(0.4)
+                : (isSelected ? AppColors.primary : AppColors.border),
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: isSelected ? Colors.white : AppColors.textSecondary,
+            color: disabled
+                ? AppColors.textSecondary.withOpacity(0.4)
+                : (isSelected ? Colors.white : AppColors.textSecondary),
             fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
             fontSize: 14,
           ),
@@ -222,7 +243,8 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
     super.initState();
     // 페이지 진입 시 route 한 번만 로드
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(myRouteProvider.notifier).loadMyRoute();
+      final routineId = ref.read(homeProvider).activeRoutine?.routineId ?? 0;
+      ref.read(myRouteProvider.notifier).loadMyRoute(routineId);
     });
   }
 
@@ -238,7 +260,8 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
     if (state.error != null && state.route == null) {
       return _ErrorView(
         message: state.error!,
-        onRetry: () => ref.read(myRouteProvider.notifier).loadMyRoute(),
+        onRetry: () => ref.read(myRouteProvider.notifier).loadMyRoute(
+              ref.read(homeProvider).activeRoutine?.routineId ?? 0),
       );
     }
 
@@ -249,7 +272,11 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
         isSectionLoading: state.isSectionLoading,
         description: '나의 설정 경로로 실시간 안내를 시작합니다.',
         buttonLabel: '시작',
-        onStart: () => ref.read(myRouteProvider.notifier).startMyRoute(),
+        onStart: () {
+                // 추천 경로가 활성화 중이면 나의 경로 시작 불가
+                if (ref.read(recoRouteProvider).isActive) return;
+                ref.read(myRouteProvider.notifier).startMyRoute();
+              },
       );
     }
 
@@ -299,10 +326,27 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
     // detourModelList(STOMP)만 있는 경우 recoList가 비어있을 수 있으므로 로드 허용.
     if (state.error == null && (state.recoList.isNotEmpty ||
         state.detourList.isNotEmpty)) return;
-    ref.read(recoRouteProvider.notifier).loadRecoRouteList();
+
+    // ✅ [버그 수정] initializeWithRoutine()이 homeProvider에 recoRouteList를
+    // preload한 상태로 진입한 경우, 독자 API 호출 대신 해당 데이터를 그대로 주입.
+    // (루틴 상세 → 지금 출발하기 시 추천 경로 탭이 반영 안 되던 원인)
+    final homeState = ref.read(homeProvider);
+    if (homeState.recoRouteList.isNotEmpty || homeState.detourRouteList.isNotEmpty) {
+      ref.read(recoRouteProvider.notifier).preloadList(
+        RecoRouteListResponse(
+          recoList:        homeState.recoRouteList,
+          detourList:      homeState.detourRouteList,
+          hasIncident:     homeState.hasIncident,
+          incidentMessage: homeState.incidentMessage,
+        ),
+      );
+      return;
+    }
+
+    final routineId = ref.read(homeProvider).activeRoutine?.routineId ?? 0;
+    ref.read(recoRouteProvider.notifier).loadRecoRouteList(routineId);
   }
 
-  @override
   Widget build(BuildContext context) {
     final state = ref.watch(recoRouteProvider);
     // incidentDetourProvider를 watch → STOMP로 incident/detour 수신 시 리빌드 트리거.
@@ -310,11 +354,16 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
     // provider 생성 타이밍 문제로 첫 수신이 누락될 수 있으므로 이중 안전장치로 watch.
     ref.watch(incidentDetourProvider);
 
-    // ── 이동 중 (경로 변경 완료) → 기존 상세 뷰
-    if (state.isActive && state.route != null) {
-      return _RouteDetail(
-        route: state.route!,
-        currentSection: state.currentSection,
+    // ── 이동 중 (경로 변경 완료) → RecoLiveRouteScreen 인라인 표시
+    // Navigator.push 대신 탭 내부에서 표시하여 바텀 네비게이션 유지
+    if (state.isActive) {
+      final activeRecoId = state.selectedRecoId ?? state.selectedDetourPathId ?? 0;
+      final isDetour = state.selectedDetourPathId != null;
+      return RecoLiveRouteScreen(
+        key: ValueKey('inline_reco_live_$activeRecoId'),
+        recoId: activeRecoId,
+        isDetour: isDetour,
+        isInline: true,
         onStop: () => ref.read(recoRouteProvider.notifier).stopRecoRoute(),
       );
     }
@@ -379,7 +428,8 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
         message: state.error!,
         onRetry: () {
           // 에러 재시도: 가드를 무시하고 강제 재로드
-          ref.read(recoRouteProvider.notifier).loadRecoRouteList(force: true);
+          ref.read(recoRouteProvider.notifier).loadRecoRouteList(
+              ref.read(homeProvider).activeRoutine?.routineId ?? 0, force: true);
         },
       );
     }
@@ -402,7 +452,8 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
             const SizedBox(height: 12),
             TextButton.icon(
               onPressed: () =>
-                  ref.read(recoRouteProvider.notifier).loadRecoRouteList(force: true),
+                  ref.read(recoRouteProvider.notifier).loadRecoRouteList(
+                      ref.read(homeProvider).activeRoutine?.routineId ?? 0, force: true),
               icon: const Icon(Icons.refresh, size: 18),
               label: const Text('다시 시도'),
             ),
@@ -524,30 +575,28 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
             final detourId = state.selectedDetourPathId;
             if (detourId != null) {
               if (!context.mounted) return;
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => RecoLiveRouteScreen(
-                    recoId: detourId,
-                    isDetour: true,
-                  ),
-                ),
-              );
+              // 인라인 표시: Navigator.push 대신 recoRouteProvider.saveAndStartDetourRoute 호출
+              // → isActive=true가 되면 _RecoRouteTab build()에서 RecoLiveRouteScreen이 인라인으로 표시됨
+              await ref
+                  .read(recoRouteProvider.notifier)
+                  .saveAndStartDetourRoute(detourId);
               return;
             }
             // 추천 경로 선택 시 → POST /me/routines/active/reco/{recoId}
             final id = state.selectedRecoId;
             if (id == null) return;
+            // 나의 경로가 활성화 중이면 추천 경로 시작 불가
+            if (ref.read(myRouteProvider).isActive) return;
             // homeProvider에 isUsingRecoRoute=true 반영 → liveLocationProvider가
             // 이후 GPS를 /app/reco로 전송하여 서버가 /user/queue/location/reco를 push
             await ref
                 .read(homeProvider.notifier)
                 .switchToRecommendedRoute(id);
             if (!context.mounted) return;
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => RecoLiveRouteScreen(recoId: id),
-              ),
-            );
+            // 인라인 표시: Navigator.push 대신 recoRouteProvider.saveAndStartRecoRoute 호출
+            await ref
+                .read(recoRouteProvider.notifier)
+                .saveAndStartRecoRoute(id);
           },
         ),
       ],
@@ -2568,8 +2617,30 @@ class _RecoRouteTabContentState extends ConsumerState<RecoRouteTabContent> {
     final state = ref.read(recoRouteProvider);
     if (state.isRouteLoading) return;
     if (state.isActive) return;
-    if (state.recoList.isNotEmpty || state.detourList.isNotEmpty) return;
-    ref.read(recoRouteProvider.notifier).loadRecoRouteList();
+    // recoList 또는 detourList(REST)가 이미 있으면 스킵
+    if (state.error == null && (state.recoList.isNotEmpty ||
+        state.detourList.isNotEmpty)) return;
+
+    // ✅ [버그 수정] initializeWithRoutine() / initialize()가 homeProvider에
+    // preload한 데이터가 있으면 독자 API 호출 없이 해당 데이터를 주입.
+    // (루틴 상세 → 지금 출발하기 경로에서 추천 경로 탭 미반영 버그 수정)
+    final homeState = ref.read(homeProvider);
+    if (homeState.recoRouteList.isNotEmpty || homeState.detourRouteList.isNotEmpty) {
+      ref.read(recoRouteProvider.notifier).preloadList(
+        RecoRouteListResponse(
+          recoList:        homeState.recoRouteList,
+          detourList:      homeState.detourRouteList,
+          hasIncident:     homeState.hasIncident,
+          incidentMessage: homeState.incidentMessage,
+        ),
+      );
+      return;
+    }
+
+    // ✅ [버그 수정] routineId를 homeProvider.activeRoutine에서 가져와
+    // getRecoRouteListResponse(routineId)에 올바르게 전달
+    final routineId = homeState.activeRoutine?.routineId ?? 0;
+    ref.read(recoRouteProvider.notifier).loadRecoRouteList(routineId);
   }
 
   @override
@@ -2592,7 +2663,8 @@ class _MyRouteTabContentState extends ConsumerState<MyRouteTabContent> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(myRouteProvider.notifier).loadMyRoute();
+      final routineId = ref.read(homeProvider).activeRoutine?.routineId ?? 0;
+      ref.read(myRouteProvider.notifier).loadMyRoute(routineId);
     });
   }
 

@@ -497,65 +497,300 @@ class OnbBriefingMockup extends StatelessWidget {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: const Color(0xFFE9ECEF)),
         ),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // AI 브리핑 카드
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 2))],
+        padding: const EdgeInsets.all(12),
+        child: SingleChildScrollView(
+          physics: const NeverScrollableScrollPhysics(),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ① AI 요약 카드
+              _OnbCard(
+                headerColor: const LinearGradient(
+                  colors: [AppColors.secondary, Color(0xFF00D4C0)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                headerContent: const Row(
+                  children: [
+                    Icon(Icons.auto_awesome, color: Colors.white, size: 14),
+                    SizedBox(width: 6),
+                    Text('AI 요약', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                  ],
+                ),
+                body: const Text(
+                  '오늘은 맑은 날씨가 예상됩니다. 2호선 강남 구간에 지연이 있으니 10분 일찍 출발하세요.',
+                  style: TextStyle(fontSize: 11, color: AppColors.textPrimary, height: 1.5),
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.auto_awesome_rounded, size: 16, color: AppColors.primary),
+              const SizedBox(height: 8),
+
+              // ② 날씨 카드
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.wb_sunny_outlined, color: AppColors.primary, size: 14),
+                        SizedBox(width: 6),
+                        Text('오늘의 날씨',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text('☀️', style: TextStyle(fontSize: 28)),
+                        const SizedBox(width: 8),
+                        const Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('23°', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: AppColors.textPrimary)),
+                            Text('맑음', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                          ],
+                        ),
+                        const Spacer(),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Row(children: [
+                              const Icon(Icons.arrow_upward, size: 11, color: Colors.red),
+                              Text('27°', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.red)),
+                            ]),
+                            const SizedBox(height: 3),
+                            Row(children: [
+                              const Icon(Icons.arrow_downward, size: 11, color: Colors.blue),
+                              Text('16°', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.blue)),
+                            ]),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Divider(height: 1),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        _OnbWeatherTile(icon: Icons.water_drop_outlined, iconColor: const Color(0xFF1565C0), label: '강수량', value: '없음', valueColor: AppColors.textSecondary),
+                        const SizedBox(width: 6),
+                        _OnbWeatherTile(icon: Icons.air, iconColor: Colors.green, label: '미세먼지', value: '보통', valueColor: Colors.green),
+                        const SizedBox(width: 6),
+                        _OnbWeatherTile(icon: Icons.blur_on, iconColor: Colors.blue, label: '초미세먼지', value: '좋음', valueColor: Colors.blue),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // ③ 준비물 카드
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.backpack_outlined, color: AppColors.primary, size: 14),
+                        SizedBox(width: 6),
+                        Text('오늘의 준비물',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Icon(Icons.dry_cleaning_outlined, size: 13, color: AppColors.secondary),
                       const SizedBox(width: 6),
-                      const Text('AI 브리핑', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.primary)),
-                      const Spacer(),
-                      Text('오늘 오전 7:00', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    '오늘은 맑은 날씨가 예상됩니다. 2호선 강남 구간에 지연이 있으니 10분 일찍 출발하세요.',
-                    style: TextStyle(fontSize: 13, color: AppColors.textPrimary, height: 1.5),
-                  ),
-                ],
+                      const Text('옷차림 추천',
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+                    ]),
+                    const SizedBox(height: 4),
+                    const Text('낮에는 반팔, 얇은 긴팔이 적당하며 일교차가 있으니 가디건을 챙기세요.',
+                        style: TextStyle(fontSize: 11, height: 1.5)),
+                    const SizedBox(height: 10),
+                    const Divider(height: 1),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Icon(Icons.checklist_outlined, size: 13, color: AppColors.secondary),
+                      const SizedBox(width: 6),
+                      const Text('챙겨야 할 것',
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+                    ]),
+                    const SizedBox(height: 4),
+                    const Text('자외선 차단을 위한 선크림과 선글라스를 챙기면 좋습니다.',
+                        style: TextStyle(fontSize: 11, height: 1.5)),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            // 날씨/교통 요약 칩
-            Row(
-              children: [
-                OnbInfoChip(icon: Icons.wb_sunny_rounded, label: '맑음 · 23°C', color: const Color(0xFFF59E0B)),
-                const SizedBox(width: 8),
-                OnbInfoChip(icon: Icons.warning_amber_rounded, label: '2호선 지연', color: const Color(0xFFEF4444)),
-              ],
-            ),
-            const SizedBox(height: 10),
-            // 추천 출발
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(10),
+              const SizedBox(height: 8),
+
+              // ④ 일정 카드
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.calendar_today_outlined, color: AppColors.primary, size: 14),
+                        const SizedBox(width: 6),
+                        const Text('오늘의 일정',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.green.withOpacity(0.3)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.check_circle_outline, size: 10, color: Colors.green),
+                              SizedBox(width: 3),
+                              Text('Google Calendar 연동됨',
+                                  style: TextStyle(fontSize: 9, color: Colors.green, fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.10),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: AppColors.primary.withOpacity(0.30)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(width: 7, height: 7, decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.primary)),
+                          const SizedBox(width: 5),
+                          const Text('내 캘린더', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.primary)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Container(width: 3,
+                            decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.35), borderRadius: BorderRadius.circular(4))),
+                          const SizedBox(width: 8),
+                          const Expanded(child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(children: [
+                                SizedBox(width: 36, child: Text('09:00', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.primary))),
+                                SizedBox(width: 5),
+                                Text('팀 스탠드업 미팅', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                              ]),
+                              SizedBox(height: 6),
+                              Row(children: [
+                                SizedBox(width: 36, child: Text('14:00', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.primary))),
+                                SizedBox(width: 5),
+                                Text('기획 리뷰', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                              ]),
+                            ],
+                          )),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              child: Row(
-                children: [
-                  const Icon(Icons.schedule_rounded, size: 18, color: AppColors.primary),
-                  const SizedBox(width: 8),
-                  const Text('추천 출발 시각', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                  const Spacer(),
-                  const Text('09:17', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.primary)),
-                ],
-              ),
-            ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// 온보딩 브리핑 목업용 헤더 있는 카드
+class _OnbCard extends StatelessWidget {
+  final Gradient headerColor;
+  final Widget headerContent;
+  final Widget body;
+  const _OnbCard({required this.headerColor, required this.headerContent, required this.body});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(gradient: headerColor),
+            child: headerContent,
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: body,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 온보딩 브리핑 목업용 날씨 타일
+class _OnbWeatherTile extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String label;
+  final String value;
+  final Color valueColor;
+  const _OnbWeatherTile({required this.icon, required this.iconColor, required this.label, required this.value, required this.valueColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(icon, size: 11, color: iconColor),
+              const SizedBox(width: 3),
+              Text(label, style: const TextStyle(fontSize: 9, color: AppColors.textSecondary)),
+            ]),
+            const SizedBox(height: 3),
+            Text(value, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: valueColor)),
           ],
         ),
       ),

@@ -106,6 +106,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: RouteConstants.routineDetail,
         builder: (context, state) {
           final id = int.parse(state.pathParameters['id']!);
+          // extra로 RoutineModel을 넘기면 API 재호출 없이 즉시 표시
+          final routine = state.extra is RoutineModel
+              ? state.extra as RoutineModel
+              : null;
           return RoutineDetailScreen(routineId: id);
         },
       ),

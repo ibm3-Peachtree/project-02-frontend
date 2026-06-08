@@ -377,9 +377,15 @@ class _RoutineCreateScreenState extends ConsumerState<RoutineCreateScreen> {
                 allDays: _allDays,
                 arrivalTimeStr: _arrivalTimeStr,
                 onDayToggle: (day) =>
-                    setState(() => _selectedDays.contains(day)
-                        ? _selectedDays.remove(day)
-                        : _selectedDays.add(day)),
+                    setState(() {
+                      _selectedDays.contains(day)
+                          ? _selectedDays.remove(day)
+                          : _selectedDays.add(day);
+                      // 토/일이 포함되면 공휴일 제외 강제 off
+                      if (_selectedDays.contains('SAT') || _selectedDays.contains('SUN')) {
+                        _skipHoliday = false;
+                      }
+                    }),
                 onPickTime: _pickTime,
                 existingNames: ref.read(routineListProvider).valueOrNull
                     ?.where((r) => r.routineId != widget.editRoutine?.routineId)
@@ -800,7 +806,9 @@ class _Step1 extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             // ── 공휴일 제외 토글 ──────────────────────────
-            Container(
+            Builder(builder: (context) {
+              final hasWeekend = selectedDays.contains('SAT') || selectedDays.contains('SUN');
+              return Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -813,16 +821,20 @@ class _Step1 extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('공휴일 제외',
+                        Text('공휴일 제외',
                             style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
-                                color: AppColors.textPrimary)),
+                                color: hasWeekend
+                                    ? AppColors.textSecondary
+                                    : AppColors.textPrimary)),
                         const SizedBox(height: 2),
                         Text(
-                          skipHoliday
-                              ? '공휴일에는 루틴 알림 및 실시간 경로 안내가 없어요'
-                              : '공휴일에도 루틴을 정상 실행해요',
+                          hasWeekend
+                              ? '토/일이 포함된 경우 공휴일 제외를 사용할 수 없어요'
+                              : skipHoliday
+                                  ? '공휴일에는 루틴 알림 및 실시간 경로 안내가 없어요'
+                                  : '공휴일에도 루틴을 정상 실행해요',
                           style: const TextStyle(
                               fontSize: 12,
                               color: AppColors.textSecondary),
@@ -832,13 +844,14 @@ class _Step1 extends StatelessWidget {
                   ),
                   const SizedBox(width: 12),
                   Switch(
-                    value: skipHoliday,
+                    value: hasWeekend ? false : skipHoliday,
                     activeColor: AppColors.primary,
-                    onChanged: onSkipHolidayChanged,
+                    onChanged: hasWeekend ? null : onSkipHolidayChanged,
                   ),
                 ],
               ),
-            ),
+            );
+            }),
             const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,

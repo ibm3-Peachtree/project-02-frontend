@@ -14,18 +14,18 @@ abstract class HomeRepository {
   // 이 아래 메서드들은 REST API 호출로 초기 1회 fetch 또는 저장 용도로만 사용.
   // 실시간 STREAM 수신은 StompService를 직접 구독하는 Provider에서 처리한다.
 
-  /// REST GET /me/routines/active/route — 나의 경로 정보 (초기 1회 fetch)
-  Future<LiveRouteModel> getMyRoute();
+  /// REST GET /me/routines/active/route/{routineId} — 나의 경로 정보 (초기 1회 fetch)
+  Future<LiveRouteModel> getMyRoute(int routineId);
 
-  /// REST GET /me/routines/active/reco — 추천 경로 정보 (초기 1회 fetch)
-  Future<LiveRouteModel> getRecommendedRoute();
+  /// REST GET /me/routines/active/reco/{routineId} — 추천 경로 정보 (초기 1회 fetch)
+  Future<LiveRouteModel> getRecommendedRoute(int routineId);
 
-  /// REST GET /me/routines/active/reco — 추천 경로 목록 (RouteListDto[])
-  Future<List<RouteModel>> getRecoRouteList();
+  /// REST GET /me/routines/active/reco/{routineId} — 추천 경로 목록 (RouteListDto[])
+  Future<List<RouteModel>> getRecoRouteList(int routineId);
 
-  /// REST GET /me/routines/active/reco — 추천 경로 목록 + 돌발/우회 래퍼
+  /// REST GET /me/routines/active/reco/{routineId} — 추천 경로 목록 + 돌발/우회 래퍼
   /// ※ 실시간 사고/우회 경로는 STOMP /user/queue/incident·detour 로 수신
-  Future<RecoRouteListResponse> getRecoRouteListResponse();
+  Future<RecoRouteListResponse> getRecoRouteListResponse(int routineId);
 
   /// REST POST /me/routines/active/reco/{recoId} — 추천 경로 선택 저장
   Future<void> saveRecoRoute(int recoId);
@@ -128,22 +128,22 @@ class ApiHomeRepository implements HomeRepository {
   // ── REST: 나의 경로 초기 fetch ────────────────────────────────────────
   // 실시간 갱신: STOMP /user/queue/location/my (MyRouteNotifier 구독)
   @override
-  Future<LiveRouteModel> getMyRoute() async {
-    final response = await _dio.get(ApiConstants.liveMyRoute);
+  Future<LiveRouteModel> getMyRoute(int routineId) async {
+    final response = await _dio.get(ApiConstants.liveMyRoute(routineId));
     return LiveRouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
   // ── REST: 추천 경로 초기 fetch ────────────────────────────────────────
   // 실시간 갱신: STOMP /user/queue/location/reco (RecoRouteNotifier 구독)
   @override
-  Future<LiveRouteModel> getRecommendedRoute() async {
-    final response = await _dio.get(ApiConstants.liveRecoRoute);
+  Future<LiveRouteModel> getRecommendedRoute(int routineId) async {
+    final response = await _dio.get(ApiConstants.liveRecoRouteList(routineId));
     return LiveRouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
   @override
-  Future<List<RouteModel>> getRecoRouteList() async {
-    final response = await _dio.get(ApiConstants.liveRecoRouteList);
+  Future<List<RouteModel>> getRecoRouteList(int routineId) async {
+    final response = await _dio.get(ApiConstants.liveRecoRouteList(routineId));
     final list = response.data as List<dynamic>;
     return list
         .map((e) => RouteModel.fromJson(e as Map<String, dynamic>))
@@ -155,8 +155,8 @@ class ApiHomeRepository implements HomeRepository {
   //   STOMP /user/queue/incident  (IncidentDetourNotifier.subscribeRaw)
   //   STOMP /user/queue/detour    (IncidentDetourNotifier.subscribeRaw)
   @override
-  Future<RecoRouteListResponse> getRecoRouteListResponse() async {
-    final response = await _dio.get(ApiConstants.liveRecoRouteList);
+  Future<RecoRouteListResponse> getRecoRouteListResponse(int routineId) async {
+    final response = await _dio.get(ApiConstants.liveRecoRouteList(routineId));
     return RecoRouteListResponse.fromJson(response.data);
   }
 
@@ -167,13 +167,13 @@ class ApiHomeRepository implements HomeRepository {
 
   @override
   Future<RouteModel> getRecoRouteDetail(int recoId) async {
-    final response = await _dio.get('/me/routines/active/reco/$recoId');
+    final response = await _dio.get(ApiConstants.liveRecoRouteDetail(recoId));
     return RouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
   @override
   Future<RouteModel> getDetourDetail(int pathId) async {
-    final response = await _dio.get('/me/routines/active/reco/detour/$pathId');
+    final response = await _dio.get(ApiConstants.liveRecoDetourDetail(pathId));
 
     // 서버가 List<DetourDto> 배열로 응답하는 경우 — pathId로 찾아 변환
     if (response.data is List) {
@@ -230,7 +230,7 @@ class ApiHomeRepository implements HomeRepository {
 
   @override
   Future<void> saveDetourRoute(int pathId) async {
-    await _dio.post('/me/routines/active/reco/detour/$pathId');
+    await _dio.post(ApiConstants.liveDetourSave(pathId));
   }
 
   // ── REST: 나의 경로 현재 구간 초기 1회 fetch ─────────────────────────

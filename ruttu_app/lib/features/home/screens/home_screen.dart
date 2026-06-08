@@ -23,7 +23,7 @@ import '../../../data/services/stomp_service.dart';
 import '../../routine/providers/routine_provider.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
 import '../../../core/widgets/live_route_tabs.dart';
-import '../providers/live_route_provider.dart' show incidentDetourProvider, recoRouteProvider;
+import '../providers/live_route_provider.dart' show incidentDetourProvider, recoRouteProvider, myRouteProvider;
 import 'mock_briefing_screen.dart';
 import 'mock_community_screen.dart';
 import 'mock_report_screen.dart';
@@ -1761,6 +1761,14 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // ✅ [버그 수정] homeProvider.myRoute는 RoutineModel.route에서 변환한
+      // 로컬 값이므로 API에서 실제 경로 데이터를 한 번 명시적으로 로드한다.
+      // (getMyRoute(routineId) → myRouteProvider.route 갱신)
+      final routineId = ref.read(homeProvider).activeRoutine?.routineId;
+      if (routineId != null) {
+        ref.read(myRouteProvider.notifier).loadMyRoute(routineId);
+      }
+
       final briefing = ref.read(briefingProvider);
       if (briefing.weather == null && !briefing.isLoading) {
         ref.read(briefingProvider.notifier).load();
@@ -1988,6 +1996,45 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
             builder: (context) {
               final screenH = MediaQuery.of(context).size.height;
               final minPanelH = screenH * 0.35 + 16;
+              return Positioned(
+                right: 12,
+                bottom: minPanelH,
+                child: Column(
+                  children: [
+                    _MapZoomButton(
+                      icon: Icons.add,
+                      onTap: () async {
+                        if (_mapController == null) return;
+                        await _mapController!.updateCamera(NCameraUpdate.zoomIn());
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    _MapZoomButton(
+                      icon: Icons.remove,
+                      onTap: () async {
+                        if (_mapController == null) return;
+                        await _mapController!.updateCamera(NCameraUpdate.zoomOut());
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    _MapZoomButton(
+                      icon: Icons.my_location,
+                      onTap: () {
+                        if (_mapController != null) {
+                          _moveToCurrentLocation(_mapController!);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          // ── 줌 컨트롤 버튼 (active 지도) ──────────────────────────────
+          Builder(
+            builder: (context) {
+              final screenH = MediaQuery.of(context).size.height;
+              final minPanelH = screenH * 0.45 + 16;
               return Positioned(
                 right: 12,
                 bottom: minPanelH,
@@ -2426,6 +2473,46 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                 // 추천 경로 좌표가 아직 없으면 (출발 직후 폴링 전) GPS 위치로 이동
                 _moveToCurrentLocation(controller);
               }
+            },
+          ),
+          // ── 줌 / 현위치 버튼 (active 지도) ───────────────────────────────
+          Builder(
+            builder: (context) {
+              final screenH = MediaQuery.of(context).size.height;
+              final minPanelH = screenH * 0.35 + 16;
+              return Positioned(
+                right: 12,
+                bottom: minPanelH,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _MapZoomButton(
+                      icon: Icons.add,
+                      onTap: () async {
+                        if (_mapController == null) return;
+                        await _mapController!.updateCamera(NCameraUpdate.zoomIn());
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    _MapZoomButton(
+                      icon: Icons.remove,
+                      onTap: () async {
+                        if (_mapController == null) return;
+                        await _mapController!.updateCamera(NCameraUpdate.zoomOut());
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    _MapZoomButton(
+                      icon: Icons.my_location,
+                      onTap: () {
+                        if (_mapController != null) {
+                          _moveToCurrentLocation(_mapController!);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              );
             },
           ),
           SafeArea(

@@ -66,18 +66,17 @@ class _BriefingScreenState extends ConsumerState<BriefingScreen> {
                 _AiSummaryCard(summary: state.aiSummary),
                 const SizedBox(height: 12),
 
-                // ③ 날씨 카드
+                // ③ 날씨 카드 (ResponseWeatherDto API 전용)
                 if (state.briefingWeather != null)
                   _BriefingWeatherCard(weather: state.briefingWeather!)
-                else if (state.weather != null)
-                  _WeatherCard(weather: state.weather!),
+                else
+                  _WeatherLoadingCard(),
                 const SizedBox(height: 12),
-                // ④ 준비물 브리핑 카드
+                // ④ 준비물 브리핑 카드 (ResponseWeatherDto API 전용)
                 if (state.briefingWeather != null)
-                  _BriefingPrepCard(weather: state.briefingWeather!)
-                else if (state.weather != null)
-                  _PrepCard(weather: state.weather!),
-                const SizedBox(height: 12),
+                  _BriefingPrepCard(weather: state.briefingWeather!),
+                if (state.briefingWeather != null)
+                  const SizedBox(height: 12),
 
                 // ⑤ 오늘의 일정 카드 (Google Calendar)
                 _ScheduleCard(
@@ -99,11 +98,19 @@ class _BriefingWeatherCard extends StatelessWidget {
 
   String get _skyEmoji {
     switch (weather.sky) {
-      case '맑음': return '☀️';
-      case '구름 많음': return '⛅';
-      case '흐림': return '☁️';
-      default: return '🌤';
+      case '맑음':    return '☀️';
+      case '구름많음': return '⛅';
+      case '흐림':    return '☁️';
+      default:        return '🌤';
     }
+  }
+
+  String get _skyLabel => weather.sky; // 백엔드가 이미 한글로 내려줌
+
+  /// 강수량 문자열이 의미있는 값인지 (없음/빈값 제외)
+  bool get _hasPcp {
+    final v = weather.pcp.trim();
+    return v.isNotEmpty && v != '강수없음' && v != '없음' && v != '-' && v != '0';
   }
 
   @override
@@ -114,58 +121,160 @@ class _BriefingWeatherCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── 헤더 ──
             Row(
               children: [
                 const Icon(Icons.wb_sunny_outlined, color: AppColors.primary),
                 const SizedBox(width: 8),
                 const Text('오늘의 날씨',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               ],
             ),
             const SizedBox(height: 16),
+
+            // ── 현재 기온 + 최고/최저 ──
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(_skyEmoji, style: const TextStyle(fontSize: 40)),
+                Text(_skyEmoji, style: const TextStyle(fontSize: 44)),
                 const SizedBox(width: 12),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('${weather.tmp.toStringAsFixed(1)}°',
                         style: const TextStyle(
-                            fontSize: 32, fontWeight: FontWeight.w700)),
-                    Text('${weather.sky}  ${weather.pcp}',
+                            fontSize: 36, fontWeight: FontWeight.w800,
+                            color: AppColors.textPrimary)),
+                    Text(_skyLabel,
                         style: const TextStyle(
-                            fontSize: 13, color: AppColors.textSecondary)),
+                            fontSize: 14, color: AppColors.textSecondary)),
                   ],
                 ),
                 const Spacer(),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text('최고 ${weather.maxTemp.toStringAsFixed(0)}°',
-                        style: const TextStyle(
-                            fontSize: 13, color: Colors.red)),
-                    Text('최저 ${weather.minTemp.toStringAsFixed(0)}°',
-                        style: const TextStyle(
-                            fontSize: 13, color: Colors.blue)),
+                    Row(
+                      children: [
+                        const Icon(Icons.arrow_upward, size: 13, color: Colors.red),
+                        const SizedBox(width: 2),
+                        Text('${weather.maxTemp.toStringAsFixed(0)}°',
+                            style: const TextStyle(
+                                fontSize: 14, fontWeight: FontWeight.w600,
+                                color: Colors.red)),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(Icons.arrow_downward, size: 13, color: Colors.blue),
+                        const SizedBox(width: 2),
+                        Text('${weather.minTemp.toStringAsFixed(0)}°',
+                            style: const TextStyle(
+                                fontSize: 14, fontWeight: FontWeight.w600,
+                                color: Colors.blue)),
+                      ],
+                    ),
                   ],
                 ),
               ],
             ),
+            const SizedBox(height: 14),
+            const Divider(height: 1),
             const SizedBox(height: 12),
-            const Divider(),
-            const SizedBox(height: 8),
+
+            // ── 강수량 + 미세먼지 그리드 ──
             Row(
               children: [
-                _AirBadge(label: '미세먼지', value: weather.pm10),
+                // 강수량
+                Expanded(
+                  child: _WeatherInfoTile(
+                    icon: Icons.water_drop_outlined,
+                    iconColor: const Color(0xFF1565C0),
+                    label: '강수량',
+                    value: _hasPcp ? weather.pcp : '없음',
+                    valueColor: _hasPcp
+                        ? const Color(0xFF1565C0)
+                        : AppColors.textSecondary,
+                  ),
+                ),
                 const SizedBox(width: 8),
-                _AirBadge(label: '초미세먼지', value: weather.pm25),
+                // 미세먼지
+                Expanded(
+                  child: _WeatherInfoTile(
+                    icon: Icons.air,
+                    iconColor: _AirBadge.colorFor(weather.pm10),
+                    label: '미세먼지',
+                    value: weather.pm10.isEmpty ? '—' : weather.pm10,
+                    valueColor: _AirBadge.colorFor(weather.pm10),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // 초미세먼지
+                Expanded(
+                  child: _WeatherInfoTile(
+                    icon: Icons.blur_on,
+                    iconColor: _AirBadge.colorFor(weather.pm25),
+                    label: '초미세먼지',
+                    value: weather.pm25.isEmpty ? '—' : weather.pm25,
+                    valueColor: _AirBadge.colorFor(weather.pm25),
+                  ),
+                ),
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 날씨 정보 타일 (아이콘 + 라벨 + 값)
+class _WeatherInfoTile extends StatelessWidget {
+  const _WeatherInfoTile({
+    required this.icon,
+    required this.iconColor,
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: iconColor),
+              const SizedBox(width: 4),
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: valueColor ?? AppColors.textPrimary,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -176,7 +285,7 @@ class _AirBadge extends StatelessWidget {
   final String value;
   const _AirBadge({required this.label, required this.value});
 
-  Color get _color {
+  static Color colorFor(String value) {
     switch (value) {
       case '좋음': return Colors.blue;
       case '보통': return Colors.green;
@@ -185,6 +294,8 @@ class _AirBadge extends StatelessWidget {
       default: return Colors.grey;
     }
   }
+
+  Color get _color => colorFor(value);
 
   @override
   Widget build(BuildContext context) {
@@ -209,6 +320,17 @@ class _BriefingPrepCard extends StatelessWidget {
   final BriefingWeatherModel weather;
   const _BriefingPrepCard({required this.weather});
 
+  /// 쉼표로 구분된 아이템 목록으로 파싱
+  List<String> _parseItems(String raw) {
+    return raw
+        .split(RegExp(r'[,，、\n]'))          // 쉼표·줄바꿈 모두 구분자
+        .map((s) => s
+            .replaceAll(RegExp(r'^[\d\.\-\*\•]+\s*'), '') // 앞 번호·기호 제거
+            .trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -217,70 +339,94 @@ class _BriefingPrepCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── 헤더 ──
             Row(
               children: [
                 const Icon(Icons.backpack_outlined, color: AppColors.primary),
                 const SizedBox(width: 8),
                 const Text('오늘의 준비물',
-                    style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w700)),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               ],
             ),
             const SizedBox(height: 16),
-            // 옷차림 추천
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.dry_cleaning_outlined,
-                    size: 20, color: AppColors.secondary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('옷차림 추천',
-                          style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textSecondary)),
-                      const SizedBox(height: 4),
-                      Text(weather.clothes,
-                          style: const TextStyle(fontSize: 14)),
-                    ],
-                  ),
-                ),
-              ],
+
+            // ── 옷차림 ──
+            _PrepSection(
+              icon: Icons.dry_cleaning_outlined,
+              label: '옷차림 추천',
             ),
+            const SizedBox(height: 8),
+            Text(
+              weather.clothes.isEmpty ? '정보 없음' : weather.clothes,
+              style: const TextStyle(fontSize: 14, height: 1.5),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+
+            // ── 준비물 ──
             if (weather.supplies.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Divider(),
-              const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.checklist_outlined,
-                      size: 20, color: AppColors.secondary),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('챙겨야 할 것',
-                            style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.textSecondary)),
-                        const SizedBox(height: 4),
-                        Text(weather.supplies,
-                            style: const TextStyle(fontSize: 14)),
-                      ],
-                    ),
-                  ),
-                ],
+              const SizedBox(height: 16),
+              const Divider(height: 1),
+              const SizedBox(height: 16),
+              _PrepSection(
+                icon: Icons.checklist_outlined,
+                label: '챙겨야 할 것',
+              ),
+              const SizedBox(height: 8),
+              Text(
+                weather.supplies,
+                style: const TextStyle(fontSize: 14, height: 1.5),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PrepSection extends StatelessWidget {
+  const _PrepSection({required this.icon, required this.label});
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: AppColors.secondary),
+        const SizedBox(width: 8),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary)),
+      ],
+    );
+  }
+}
+
+class _PrepChip extends StatelessWidget {
+  const _PrepChip({required this.label, this.color});
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = color ?? AppColors.secondary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: c.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: c.withOpacity(0.3)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+            fontSize: 13, fontWeight: FontWeight.w500, color: c),
       ),
     );
   }
@@ -1021,159 +1167,26 @@ class _MeetingRouteCard extends StatelessWidget {
   }
 }
 
-// ── fallback 날씨 카드 (WeatherAirQualityModel 기반) ──────────────────────────
-class _WeatherCard extends StatelessWidget {
-  final WeatherAirQualityModel weather;
-  const _WeatherCard({required this.weather});
-
-  @override
-  Widget build(BuildContext context) {
-    final current = weather.current;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.wb_sunny_outlined, color: AppColors.primary),
-                const SizedBox(width: 8),
-                const Text('오늘의 날씨',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(weather.skyEmoji, style: const TextStyle(fontSize: 40)),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${current?.tmp ?? '--'}°',
-                        style: const TextStyle(
-                            fontSize: 32, fontWeight: FontWeight.w700)),
-                    Text(
-                      current != null
-                          ? '강수확률 ${current.pop}%  습도 ${current.reh}%'
-                          : '',
-                      style: const TextStyle(
-                          fontSize: 13, color: AppColors.textSecondary),
-                    ),
-                  ],
-                ),
-                const Spacer(),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text('미세먼지 ${weather.pm10Label}',
-                        style: const TextStyle(
-                            fontSize: 13, color: AppColors.textSecondary)),
-                  ],
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── fallback 준비물 카드 (WeatherAirQualityModel 기반) ────────────────────────
-class _PrepCard extends StatelessWidget {
-  final WeatherAirQualityModel weather;
-  const _PrepCard({required this.weather});
-
-  String get _clothesRecommendation {
-    final tmp = weather.current?.tmp ?? 20;
-    if (tmp >= 28) return '민소매, 반팔, 반바지, 원피스';
-    if (tmp >= 23) return '반팔, 얇은 셔츠, 면바지, 반바지';
-    if (tmp >= 20) return '블라우스, 얇은 가디건, 면바지';
-    if (tmp >= 17) return '얇은 가디건, 긴바지';
-    if (tmp >= 12) return '자켓, 가디건, 청바지';
-    if (tmp >= 9)  return '트렌치코트, 니트, 청바지';
-    if (tmp >= 5)  return '울코트, 히트텍, 니트';
-    return '패딩, 두꺼운 코트, 목도리';
-  }
-
-  String get _suppliesRecommendation {
-    final pop = weather.current?.pop ?? 0;
-    final pm10 = weather.pm10Label;
-    final items = <String>[];
-    if (pop >= 60) items.add('우산');
-    if (pm10 == '나쁨' || pm10 == '매우나쁨') items.add('마스크');
-    return items.isEmpty ? '특별히 챙길 것이 없어요.' : items.join(', ');
-  }
+// ── 날씨 로딩 카드 (briefingWeather가 아직 없을 때) ──────────────────────────
+class _WeatherLoadingCard extends StatelessWidget {
+  const _WeatherLoadingCard();
 
   @override
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            Row(
-              children: [
-                const Icon(Icons.backpack_outlined, color: AppColors.primary),
-                const SizedBox(width: 8),
-                const Text('오늘의 준비물',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.dry_cleaning_outlined,
-                    size: 20, color: AppColors.secondary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('옷차림 추천',
-                          style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textSecondary)),
-                      const SizedBox(height: 4),
-                      Text(_clothesRecommendation,
-                          style: const TextStyle(fontSize: 14)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            const Divider(),
-            const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.checklist_outlined,
-                    size: 20, color: AppColors.secondary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('챙겨야 할 것',
-                          style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textSecondary)),
-                      const SizedBox(height: 4),
-                      Text(_suppliesRecommendation,
-                          style: const TextStyle(fontSize: 14)),
-                    ],
-                  ),
-                ),
-              ],
+            const Icon(Icons.wb_sunny_outlined, color: AppColors.primary),
+            const SizedBox(width: 8),
+            const Text('오늘의 날씨',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const Spacer(),
+            Text(
+              '날씨 정보를 불러오는 중...',
+              style: const TextStyle(
+                  fontSize: 13, color: AppColors.textSecondary),
             ),
           ],
         ),
