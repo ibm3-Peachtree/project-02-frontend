@@ -231,7 +231,8 @@ class _TabChip extends StatelessWidget {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class _MyRouteTab extends ConsumerStatefulWidget {
-  const _MyRouteTab();
+  final VoidCallback? onStart;
+  const _MyRouteTab({this.onStart});
 
   @override
   ConsumerState<_MyRouteTab> createState() => _MyRouteTabState();
@@ -241,8 +242,11 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
   @override
   void initState() {
     super.initState();
-    // 페이지 진입 시 route 한 번만 로드
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 이미 route가 로드됐거나 로딩 중이면 재로드 스킵
+      // (루틴 상세 → 나의 경로 선택 시 외부에서 loadMyRoute를 먼저 호출하므로 중복 방지)
+      final myState = ref.read(myRouteProvider);
+      if (myState.isRouteLoading || myState.route != null || myState.isActive) return;
       final routineId = ref.read(homeProvider).activeRoutine?.routineId ?? 0;
       ref.read(myRouteProvider.notifier).loadMyRoute(routineId);
     });
@@ -272,10 +276,12 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
         isSectionLoading: state.isSectionLoading,
         description: '나의 설정 경로로 실시간 안내를 시작합니다.',
         buttonLabel: '시작',
-        onStart: () {
+        onStart: () async {
                 // 추천 경로가 활성화 중이면 나의 경로 시작 불가
                 if (ref.read(recoRouteProvider).isActive) return;
-                ref.read(myRouteProvider.notifier).startMyRoute();
+                await ref.read(myRouteProvider.notifier).startMyRoute();
+                // 바텀시트 진입 시 전달된 콜백 호출 (홈 이동 등)
+                widget.onStart?.call();
               },
       );
     }
@@ -296,7 +302,8 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
 class _RecoRouteTab extends ConsumerStatefulWidget {
   final ScrollController? scrollController;
   final VoidCallback? onKeep;
-  const _RecoRouteTab({this.scrollController, this.onKeep});
+  final VoidCallback? onRouteStarted;
+  const _RecoRouteTab({this.scrollController, this.onKeep, this.onRouteStarted});
 
   @override
   ConsumerState<_RecoRouteTab> createState() => _RecoRouteTabState();
@@ -580,6 +587,7 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
               await ref
                   .read(recoRouteProvider.notifier)
                   .saveAndStartDetourRoute(detourId);
+              if (context.mounted) widget.onRouteStarted?.call();
               return;
             }
             // 추천 경로 선택 시 → POST /me/routines/active/reco/{recoId}
@@ -597,6 +605,7 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
             await ref
                 .read(recoRouteProvider.notifier)
                 .saveAndStartRecoRoute(id);
+            if (context.mounted) widget.onRouteStarted?.call();
           },
         ),
       ],
@@ -2597,7 +2606,10 @@ class RecoRouteTabContent extends ConsumerStatefulWidget {
   /// DraggableScrollableSheet 안의 TabBarView에서 사용할 때는 Navigator.pop() 대신
   /// TabController.animateTo(0) 등으로 탭을 전환하도록 호출자가 구현해야 한다.
   final VoidCallback? onKeep;
-  const RecoRouteTabContent({super.key, this.scrollController, this.onKeep});
+  /// 추천 경로 안내가 시작(경로 변경 완료)될 때 호출되는 콜백.
+  /// 루틴 상세 바텀시트 진입 시 홈 이동 등 추가 동작을 수행할 수 있다.
+  final VoidCallback? onRouteStarted;
+  const RecoRouteTabContent({super.key, this.scrollController, this.onKeep, this.onRouteStarted});
 
   @override
   ConsumerState<RecoRouteTabContent> createState() => _RecoRouteTabContentState();
@@ -2644,7 +2656,11 @@ class _RecoRouteTabContentState extends ConsumerState<RecoRouteTabContent> {
   }
 
   @override
-  Widget build(BuildContext context) => _RecoRouteTab(scrollController: widget.scrollController, onKeep: widget.onKeep);
+  Widget build(BuildContext context) => _RecoRouteTab(
+    scrollController: widget.scrollController,
+    onKeep: widget.onKeep,
+    onRouteStarted: widget.onRouteStarted,
+  );
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2652,7 +2668,10 @@ class _RecoRouteTabContentState extends ConsumerState<RecoRouteTabContent> {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class MyRouteTabContent extends ConsumerStatefulWidget {
-  const MyRouteTabContent({super.key});
+  /// 나의 경로 안내가 시작될 때 호출되는 콜백.
+  /// 루틴 상세에서 바텀시트를 통해 진입할 때 홈 이동 등 추가 동작을 수행할 수 있다.
+  final VoidCallback? onStart;
+  const MyRouteTabContent({super.key, this.onStart});
 
   @override
   ConsumerState<MyRouteTabContent> createState() => _MyRouteTabContentState();
@@ -2663,11 +2682,13 @@ class _MyRouteTabContentState extends ConsumerState<MyRouteTabContent> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final myState = ref.read(myRouteProvider);
+      if (myState.isRouteLoading || myState.route != null || myState.isActive) return;
       final routineId = ref.read(homeProvider).activeRoutine?.routineId ?? 0;
       ref.read(myRouteProvider.notifier).loadMyRoute(routineId);
     });
   }
 
   @override
-  Widget build(BuildContext context) => const _MyRouteTab();
+  Widget build(BuildContext context) => _MyRouteTab(onStart: widget.onStart);
 }

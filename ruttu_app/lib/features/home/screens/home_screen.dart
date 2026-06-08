@@ -23,7 +23,7 @@ import '../../../data/services/stomp_service.dart';
 import '../../routine/providers/routine_provider.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
 import '../../../core/widgets/live_route_tabs.dart';
-import '../providers/live_route_provider.dart' show incidentDetourProvider, recoRouteProvider, myRouteProvider;
+import '../providers/live_route_provider.dart' show incidentDetourProvider, recoRouteProvider, myRouteProvider, selectedRouteTabProvider, RouteTab;
 import 'mock_briefing_screen.dart';
 import 'mock_community_screen.dart';
 import 'mock_report_screen.dart';
@@ -1940,6 +1940,15 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
     final isOverdue = home.isDepartureOverdue;
     final minutesOverdue = home.minutesOverdue;
 
+    // ✅ [버그 수정] selectedRouteTabProvider 변화를 감지해 _tabController 동기화
+    // routine_detail_screen에서 추천 경로 선택 시 탭이 자동으로 전환됩니다.
+    ref.listen<RouteTab>(selectedRouteTabProvider, (prev, next) {
+      final targetIndex = next == RouteTab.reco ? 1 : 0;
+      if (_tabController.index != targetIndex) {
+        _tabController.animateTo(targetIndex);
+      }
+    });
+
     return Scaffold(
       backgroundColor: AppColors.background,
       floatingActionButton: AnimatedBuilder(
@@ -2427,7 +2436,15 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
       },
     );
 
-    // 폴링으로 좌표/구간이 바뀌면 지도 다시 그리기
+    // ✅ [버그 수정] selectedRouteTabProvider 변화를 감지해 _tabController 동기화
+    // routine_detail_screen에서 추천 경로 선택 시 탭이 자동으로 전환됩니다.
+    ref.listen<RouteTab>(selectedRouteTabProvider, (prev, next) {
+      final targetIndex = next == RouteTab.reco ? 1 : 0;
+      if (_tabController.index != targetIndex) {
+        _tabController.animateTo(targetIndex);
+      }
+    });
+
     // 현재 활성 탭(나의 경로 vs 추천 경로)에 맞는 좌표를 사용
     ref.listen<HomeState>(homeProvider, (prev, next) {
       if (_mapController == null) return;

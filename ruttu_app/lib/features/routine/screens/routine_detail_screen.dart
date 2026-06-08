@@ -7,6 +7,8 @@ import '../../../data/models/routine_model.dart';
 import '../../../data/models/route_model.dart';
 import '../providers/routine_provider.dart';
 import '../../home/providers/home_provider.dart';
+import '../../home/providers/live_route_provider.dart'
+    show myRouteProvider, selectedRouteTabProvider, RouteTab;
 
 class RoutineDetailScreen extends ConsumerWidget {
   final int routineId;
@@ -144,26 +146,78 @@ class _RoutineDetailBody extends ConsumerWidget {
                   return;
                 }
 
-                // ✅ [버그 수정] 오늘 루틴이면 이 루틴을 activeRoutine으로 명시 지정 후 출발.
-                // 기존 방식(homeProvider.startRoute() 바로 호출)은 homeProvider의
-                // activeRoutine이 이미 다른 루틴이거나 null일 때 동작하지 않는 문제가 있었음.
-                // initializeWithRoutine()으로 현재 루틴을 homeProvider에 세팅한 뒤
-                // startRoute()를 호출하여 루틴 2개 이상일 때도 정상 동작하도록 수정.
                 if (!context.mounted) return;
 
-                // ✅ [버그 수정] context.go() 보다 먼저 initializeWithRoutine()을 완료해야 함.
-                // 기존 코드는 go() 후 await를 했기 때문에, 홈 화면의 _RecoRouteTab.initState()가
-                // preloadList() 완료 전에 loadRecoRouteList()를 독자 호출하여
-                // 추천 경로 탭에 데이터가 반영되지 않는 문제가 있었음.
-                // homeProvider에 이 루틴을 activeRoutine으로 지정 (recoRouteList preload 포함)
+                // ✅ homeProvider에 이 루틴을 activeRoutine으로 세팅 (recoRouteList preload 포함)
                 await ref.read(homeProvider.notifier).initializeWithRoutine(routine);
 
                 if (!context.mounted) return;
-                context.go(RouteConstants.home);
 
-                // activeRoutine이 정상 세팅된 경우에만 출발
-                if (ref.read(homeProvider).activeRoutine != null) {
-                  ref.read(homeProvider.notifier).startRoute();
+                // ✅ 다이얼로그로 나의 경로 / 추천 경로 선택
+                final choice = await showDialog<String>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
+                    title: const Text('경로 선택',
+                        style: TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w700)),
+                    content: const Text('어떤 경로로 출발할까요?',
+                        style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
+                    actions: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () => Navigator.pop(ctx, 'my'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                                elevation: 0,
+                              ),
+                              child: const Text('나의 경로'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () => Navigator.pop(ctx, 'reco'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                                elevation: 0,
+                              ),
+                              child: const Text('추천 경로'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+
+                if (choice == null || !context.mounted) return;
+
+                if (choice == 'my') {
+                  context.go(RouteConstants.home);
+                  WidgetsBinding.instance.addPostFrameCallback((_) async {
+                    ref.read(selectedRouteTabProvider.notifier).state = RouteTab.my;
+                    // route 로드 → 완료 대기 → 시작 (homeProvider.startRoute가 active 상태로 전환)
+                    await ref.read(myRouteProvider.notifier).loadMyRoute(routine.routineId);
+                    await ref.read(homeProvider.notifier).startRoute();
+                  });
+                } else if (choice == 'reco') {
+                  context.go(RouteConstants.home);
+                  // 홈 화면 빌드 완료 후 추천 경로 탭으로 전환
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    ref.read(selectedRouteTabProvider.notifier).state = RouteTab.reco;
+                  });
                 }
               },
               child: const Text('지금 출발하기'),

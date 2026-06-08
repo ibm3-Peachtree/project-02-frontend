@@ -48,7 +48,13 @@ class _CommunityScreenState extends ConsumerState<CommunityScreen> {
                   // HOT 게시글 배너
                   if (feed.hotPost != null)
                     SliverToBoxAdapter(
-                      child: _HotPostBanner(post: feed.hotPost!),
+                      child: _HotPostBanner(
+                        post: feed.hotPost!,
+                        onTap: () => context.push(
+                          RouteConstants.postDetail.replaceFirst(
+                              ':id', '${feed.hotPost!.postId}'),
+                        ).then((_) => ref.read(feedProvider.notifier).load()),
+                      ),
                     ),
 
                   // 필터 행
@@ -84,7 +90,7 @@ class _CommunityScreenState extends ConsumerState<CommunityScreen> {
                             onTap: () => context.push(
                               RouteConstants.postDetail.replaceFirst(
                                   ':id', '${feed.posts[i].postId}'),
-                            ),
+                            ).then((_) => ref.read(feedProvider.notifier).load()),
                           ),
                           childCount: feed.posts.length,
                         ),
@@ -100,12 +106,13 @@ class _CommunityScreenState extends ConsumerState<CommunityScreen> {
 // ── HOT 게시글 배너 ──────────────────────────────
 class _HotPostBanner extends StatelessWidget {
   final PostSummaryModel post;
-  const _HotPostBanner({required this.post});
+  final VoidCallback? onTap;
+  const _HotPostBanner({required this.post, this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => context.push(
+      onTap: onTap ?? () => context.push(
         RouteConstants.postDetail.replaceFirst(':id', '${post.postId}'),
       ),
       child: Container(

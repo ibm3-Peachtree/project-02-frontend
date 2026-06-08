@@ -69,6 +69,11 @@ class _BriefingScreenState extends ConsumerState<BriefingScreen> {
                 // ③ 날씨 카드 (ResponseWeatherDto API 전용)
                 if (state.briefingWeather != null)
                   _BriefingWeatherCard(weather: state.briefingWeather!)
+                else if (state.weatherError != null)
+                  _WeatherErrorCard(
+                    error: state.weatherError!,
+                    onRetry: () => ref.read(briefingProvider.notifier).load(),
+                  )
                 else
                   _WeatherLoadingCard(),
                 const SizedBox(height: 12),
@@ -1195,7 +1200,42 @@ class _WeatherLoadingCard extends StatelessWidget {
   }
 }
 
-// ── ⑥ AI 요약 카드 ────────────────────────────────
+// ── 날씨 에러 카드 (API 실패 시) ─────────────────────────────────────────────
+class _WeatherErrorCard extends StatelessWidget {
+  final String error;
+  final VoidCallback onRetry;
+  const _WeatherErrorCard({required this.error, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            const Icon(Icons.wb_sunny_outlined, color: AppColors.textSecondary),
+            const SizedBox(width: 8),
+            const Text('오늘의 날씨',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh, size: 14),
+              label: const Text('다시 시도', style: TextStyle(fontSize: 13)),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _AiSummaryCard extends StatelessWidget {
   final AiSummaryModel? summary;
   const _AiSummaryCard({required this.summary});

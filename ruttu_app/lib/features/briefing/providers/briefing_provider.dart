@@ -18,6 +18,7 @@ class BriefingState {
   final bool isLoading;
   // 새 API 결과
   final BriefingWeatherModel? briefingWeather;
+  final String? weatherError;
   final List<BriefingCalendarGroup> calendarGroups;
   final String? calendarError;
 
@@ -29,6 +30,7 @@ class BriefingState {
     this.meetingRoute,
     this.isLoading = false,
     this.briefingWeather,
+    this.weatherError,
     this.calendarGroups = const [],
     this.calendarError,
   });
@@ -41,6 +43,7 @@ class BriefingState {
     RouteModel? meetingRoute,
     bool? isLoading,
     BriefingWeatherModel? briefingWeather,
+    String? weatherError,
     List<BriefingCalendarGroup>? calendarGroups,
     String? calendarError,
   }) =>
@@ -52,6 +55,7 @@ class BriefingState {
         meetingRoute:    meetingRoute    ?? this.meetingRoute,
         isLoading:       isLoading       ?? this.isLoading,
         briefingWeather: briefingWeather ?? this.briefingWeather,
+        weatherError:    weatherError    ?? this.weatherError,
         calendarGroups:  calendarGroups  ?? this.calendarGroups,
         calendarError:   calendarError   ?? this.calendarError,
       );
@@ -84,6 +88,7 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
     AiSummaryModel? aiSummary;
 
     BriefingWeatherModel? briefingWeather;
+    String? weatherError;
     List<BriefingCalendarGroup> calendarGroups = const [];
     String? calendarError;
 
@@ -94,7 +99,15 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
       () async { try { meetingRoute = await _repository.getMeetingRoute(); } catch (_) {} }(),
       if (_userId != null)
         () async { try { aiSummary = await _repository.getAiSummary(_userId!); } catch (_) {} }(),
-      () async { try { briefingWeather = await _repository.getBriefingWeather(); } catch (_) {} }(),
+      () async {
+        try {
+          briefingWeather = await _repository.getBriefingWeather();
+        } catch (e, st) {
+          weatherError = '날씨 정보를 불러오지 못했어요.';
+          debugPrint('[BriefingWeather] ERROR: $e');
+          debugPrint('[BriefingWeather] STACK: $st');
+        }
+      }(),
       () async {
         try {
           final v = await _repository.getBriefingCalendar();
@@ -117,6 +130,7 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
       meetingRoute:    meetingRoute,
       aiSummary:       aiSummary,
       briefingWeather: briefingWeather,
+      weatherError:    weatherError,
       calendarGroups:  calendarGroups,
       calendarError:   calendarError,
     );

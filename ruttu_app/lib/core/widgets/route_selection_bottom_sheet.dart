@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../theme/app_colors.dart';
+import '../constants/route_constants.dart';
 import 'live_route_tabs.dart';
 import '../../data/models/routine_model.dart';
 import '../../features/home/providers/home_provider.dart';
@@ -9,23 +11,25 @@ import '../../features/home/providers/live_route_provider.dart';
 /// "지금 출발하기" 버튼 클릭 시 표시되는 경로 선택 바텀시트.
 ///
 /// 1단계: 나의 경로 / 추천 경로 선택
-/// 2단계-A (나의 경로): 바로 나의 경로 안내 시작
-/// 2단계-B (추천 경로): 추천 경로 목록 인라인 표시
+/// 2단계-A (나의 경로): 경로 미리보기 → 시작 버튼 → 홈 화면으로 이동 후 나의 경로 안내 시작
+/// 2단계-B (추천 경로): 추천 경로 목록 → 선택 → 홈 화면으로 이동 후 추천 경로 안내 시작
 Future<void> showRouteSelectionBottomSheet(
   BuildContext context, {
   required RoutineModel routine,
+  required WidgetRef ref,
 }) {
   return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => _RouteSelectionSheet(routine: routine),
+    builder: (_) => _RouteSelectionSheet(routine: routine, ref: ref),
   );
 }
 
 class _RouteSelectionSheet extends ConsumerStatefulWidget {
-  const _RouteSelectionSheet({required this.routine});
+  const _RouteSelectionSheet({required this.routine, required this.ref});
   final RoutineModel routine;
+  final WidgetRef ref;
 
   @override
   ConsumerState<_RouteSelectionSheet> createState() =>
@@ -75,9 +79,10 @@ class _RouteSelectionSheetState extends ConsumerState<_RouteSelectionSheet> {
 
   double _sheetHeight(BuildContext context) {
     final screenH = MediaQuery.of(context).size.height;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
     switch (_step) {
       case _SheetStep.selection:
-        return 320;
+        return 320 + bottomPadding;
       case _SheetStep.myRoute:
         return screenH * 0.75;
       case _SheetStep.recoRoute:
@@ -142,11 +147,16 @@ class _RouteSelectionSheetState extends ConsumerState<_RouteSelectionSheet> {
       case _SheetStep.myRoute:
         return _MyRouteStep(
           routine: widget.routine,
-          onDismiss: () => Navigator.of(context).pop(),
+          outerRef: widget.ref,
         );
       case _SheetStep.recoRoute:
         return RecoRouteTabContent(
           onKeep: () => setState(() => _step = _SheetStep.selection),
+          onRouteStarted: () {
+            // 추천 경로 안내 시작 시 바텀시트 닫고 홈으로 이동
+            Navigator.of(context).pop();
+            if (context.mounted) context.go(RouteConstants.home);
+          },
         );
     }
   }
@@ -169,8 +179,9 @@ class _SelectionStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+      padding: EdgeInsets.fromLTRB(20, 8, 20, 16 + bottomPadding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -329,9 +340,9 @@ class _RouteOptionCard extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _MyRouteStep extends ConsumerStatefulWidget {
-  const _MyRouteStep({required this.routine, required this.onDismiss});
+  const _MyRouteStep({required this.routine, required this.outerRef});
   final RoutineModel routine;
-  final VoidCallback onDismiss;
+  final WidgetRef outerRef;
 
   @override
   ConsumerState<_MyRouteStep> createState() => _MyRouteStepState();
@@ -351,6 +362,15 @@ class _MyRouteStepState extends ConsumerState<_MyRouteStep> {
 
   @override
   Widget build(BuildContext context) {
-    return MyRouteTabContent();
+    return MyRouteTabContent(
+      onStart: () async {
+        // 바텀시트 닫기
+        Navigator.of(context).pop();
+        // 홈으로 이동
+        if (context.mounted) context.go(RouteConstants.home);
+        // 나의 경로 안내 시작
+        await ref.read(myRouteProvider.notifier).startMyRoute();
+      },
+    );
   }
 }
