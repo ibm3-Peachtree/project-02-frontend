@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:stomp_dart_client/stomp.dart';
-import 'package:stomp_dart_client/stomp_config.dart';
-import 'package:stomp_dart_client/stomp_frame.dart';
+import 'package:stomp_dart_client/stomp_dart_client.dart';
 
 // ─────────────────────────────────────────────
 //  모델 (프로젝트에 이미 있는 모델로 교체하세요)
@@ -72,7 +70,7 @@ class LiveRouteService {
 
     // STOMP 연결
     _stompClient = StompClient(
-      config: StompConfig.SockJS(
+      config: StompConfig.sockJS(
         url: wsUrl,
         onConnect: (frame) => _onStompConnected(frame, accessToken),
         webSocketConnectHeaders: {'Authorization': 'Bearer $accessToken'},
