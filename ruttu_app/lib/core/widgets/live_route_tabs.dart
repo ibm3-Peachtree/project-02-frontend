@@ -249,6 +249,8 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // 추천/우회 경로 활성 중이면 나의 경로 로드 스킵
       if (ref.read(recoRouteProvider).isActive) return;
+      if (ref.read(recoLiveRouteProvider).routeDetail != null ||
+          ref.read(recoLiveRouteProvider).isRouteLoading) return;
       // 이미 route가 로드됐거나 로딩 중이면 재로드 스킵
       final myState = ref.read(myRouteProvider);
       if (myState.isRouteLoading || myState.route != null || myState.isActive) return;
@@ -261,8 +263,24 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
   Widget build(BuildContext context) {
     final myState = ref.watch(myRouteProvider);
     final recoState = ref.watch(recoRouteProvider);
+    final recoLiveState = ref.watch(recoLiveRouteProvider);
 
-    // 추천/우회 경로 "이 경로로 변경" 완료 후 나의 경로 탭에 실시간 안내 표시
+    // ── 우회 경로 흐름: recoLiveRouteProvider 기반 실시간 안내
+    // initDetour() 호출 후 routeDetail이 로드되거나 로딩 중이면 인라인 표시
+    if (recoLiveState.isRouteLoading ||
+        recoLiveState.routeDetail != null ||
+        recoLiveState.isCompleting) {
+      // recoId는 routeDetail?.recoId 또는 0 (로딩 중에는 화면에 이미 표시됨)
+      final recoId = recoLiveState.routeDetail?.recoId ?? 0;
+      return RecoLiveRouteScreen(
+        key: const ValueKey('inline_detour'),
+        recoId: recoId,
+        isDetour: true,
+      );
+    }
+
+    // ✅ [수정2] 추천 경로 "이 경로로 변경" 후 이 탭으로 전환된 경우
+    // recoRouteProvider가 isActive=true이면 선택한 추천 경로를 실시간 안내로 표시
     if (recoState.isActive) {
       if (recoState.isSectionLoading || recoState.isRouteLoading) {
         return const Center(child: CircularProgressIndicator());
@@ -334,16 +352,15 @@ class _RecoRouteTab extends ConsumerStatefulWidget {
 }
 
 class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
-  bool _routeStartedFired = false;
 
   @override
   void initState() {
     super.initState();
-    _routeStartedFired = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _tryLoad();
       // incidentDetourProvider를 명시적으로 초기화 — STOMP /user/queue/incident 와
       // /user/queue/detour 구독이 확실히 시작되도록 보장.
+      // (provider가 처음 read될 때 IncidentDetourNotifier 생성 → _subscribeAll() 호출)
       ref.read(incidentDetourProvider);
     });
   }
@@ -382,18 +399,6 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
 
   Widget build(BuildContext context) {
     final state = ref.watch(recoRouteProvider);
-
-    // isActive가 true로 바뀌는 순간 onRouteStarted 콜백 실행 (탭 전환)
-    ref.listen<RecoRouteState>(recoRouteProvider, (prev, next) {
-      if (!_routeStartedFired && next.isActive && !(prev?.isActive ?? false)) {
-        _routeStartedFired = true;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) widget.onRouteStarted?.call();
-        });
-      }
-      // isActive가 false로 돌아오면 다음 경로 선택을 위해 플래그 초기화
-      if (!next.isActive) _routeStartedFired = false;
-    });
 
     // ✅ 버그 수정: "이 경로로 변경" 클릭 후 저장/로딩 중 상태 처리
     // isSaving=true 또는 isSectionLoading=true 인 경우 로딩 화면 표시
@@ -611,24 +616,28 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
           isSaving: state.isSaving || state.isSectionLoading,
           onKeep: widget.onKeep ?? () => Navigator.of(context).pop(),
           onSwitch: () async {
-            // 우회 경로 선택 시 → POST /reco/detour/{pathId} + STOMP /location/reco
+            // 우회 경로 선택 시 → POST /reco/detour/{pathId} + STOMP /location/reco + /complete/reco
             final detourId = state.selectedDetourPathId;
             if (detourId != null) {
-              if (ref.read(myRouteProvider).isActive) return;
-              await ref
-                  .read(recoRouteProvider.notifier)
-                  .saveAndStartDetourRoute(detourId);
+              if (!context.mounted) return;
+              // recoLiveRouteProvider.initDetour 가 내부에서
+              //   1. STOMP /user/queue/location/reco 구독
+              //   2. POST /me/routines/active/reco/detour/{pathId} 저장
+              //   3. 경로 상세 fetch
+              //   4. GPS 스트림 → /app/location/reco 전송
+              // 을 수행한다. recoRouteProvider 와 무관하게 독립 동작.
+              ref.read(recoLiveRouteProvider.notifier).initDetour(detourId);
               // 탭 전환은 onRouteStarted 콜백으로 home_screen의 TabController가 처리
               if (context.mounted) widget.onRouteStarted?.call();
               return;
             }
-            // 추천 경로 선택 시 → POST /me/routines/active/reco/detail/{recoId}
+            // 추천 경로 선택 시 → POST /me/routines/active/reco/{recoId}
             final id = state.selectedRecoId;
             if (id == null) return;
             // 나의 경로가 활성화 중이면 추천 경로 시작 불가
             if (ref.read(myRouteProvider).isActive) return;
             // homeProvider에 isUsingRecoRoute=true 반영 → liveLocationProvider가
-            // 이후 GPS를 /app/location/reco로 전송
+            // 이후 GPS를 /app/reco로 전송하여 서버가 /user/queue/location/reco를 push
             await ref
                 .read(homeProvider.notifier)
                 .switchToRecommendedRoute(id);
@@ -851,7 +860,7 @@ class _DetourModelCard extends StatefulWidget {
 }
 
 class _DetourModelCardState extends State<_DetourModelCard> {
-  String _formatDetourFare(int fare) {
+  String _formatFare(int fare) {
     final s = fare.toString();
     final buf = StringBuffer();
     for (int i = 0; i < s.length; i++) {
@@ -924,18 +933,33 @@ class _DetourModelCardState extends State<_DetourModelCard> {
                         // 교통수단 칩 행
                         _DetourSegmentChipRow(segments: detour.pathSegments),
                         const SizedBox(height: 6),
-                        // 소요시간
-                        Text(
-                          '$totalMin분',
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                            color: accentColor,
-                            letterSpacing: -0.5,
-                          ),
+                        // 소요시간 + 요금
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.baseline,
+                          textBaseline: TextBaseline.alphabetic,
+                          children: [
+                            Text(
+                              '$totalMin분',
+                              style: const TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700,
+                                color: accentColor,
+                                letterSpacing: -0.5,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            if (detour.cost > 0)
+                              Text(
+                                _formatFare(detour.cost),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 4),
-                        // 환승 + 요금
+                        // 환승
                         Row(
                           children: [
                             const Icon(Icons.sync_alt_rounded,
@@ -949,18 +973,6 @@ class _DetourModelCardState extends State<_DetourModelCard> {
                                   fontSize: 11,
                                   color: AppColors.textSecondary),
                             ),
-                            if (detour.cost > 0) ...[ 
-                              const SizedBox(width: 10),
-                              const Icon(Icons.monetization_on_outlined,
-                                  size: 12, color: AppColors.textSecondary),
-                              const SizedBox(width: 3),
-                              Text(
-                                _formatDetourFare(detour.cost),
-                                style: const TextStyle(
-                                    fontSize: 11,
-                                    color: AppColors.textSecondary),
-                              ),
-                            ],
                           ],
                         ),
                       ],
@@ -1688,10 +1700,7 @@ class _RecoDetailPathItemState extends State<_RecoDetailPathItem> {
 
   /// "강남역(2호선)" → "강남역"  /  숫자+호선 패턴 괄호만 제거
   String _cleanStationName(String name) =>
-      name
-          .replaceAll(RegExp(r'\s*\(\d+호선\)'), '')
-          .replaceAll(RegExp(r'\s*\(\d+\)'), '')
-          .trim();
+      name.replaceAll(RegExp(r'\(\d+호선\)'), '').trim();
 
   @override
   Widget build(BuildContext context) {
@@ -1699,7 +1708,8 @@ class _RecoDetailPathItemState extends State<_RecoDetailPathItem> {
     final isLast = widget.isLast;
     final isDetour = widget.isDetour;
 
-    // 우회/일반 경로 모두 동일한 방식으로 도보 구간 표시
+    // 도보 구간은 추천/우회 경로 상세 모두 동일하게 표시
+
     final Color color = path.isWalking
         ? AppColors.textSecondary
         : path.isSubway
@@ -1723,8 +1733,7 @@ class _RecoDetailPathItemState extends State<_RecoDetailPathItem> {
             ? '${path.start} 승차'
             : path.isSubway ? '지하철 승차' : '버스 승차';
 
-    // 도보 구간은 정류장 목록 펼치기 불가
-    final bool hasStations = !path.isWalking && path.stationName.isNotEmpty;
+    final bool hasStations = path.stationName.isNotEmpty;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,

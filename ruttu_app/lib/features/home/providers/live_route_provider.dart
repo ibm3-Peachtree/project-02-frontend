@@ -113,7 +113,7 @@ class MyRouteNotifier extends StateNotifier<MyRouteState> {
 
   Future<void> stopMyRoute() async {
     _stomp.unsubscribe(_queueLocationMy);
-    // POST /me/routines/active/complete/my
+    // ✅ 나의 경로 종료 → POST /me/routines/active/complete/my
     final departure = state.departureTime;
     final arrival   = DateTime.now();
     if (departure != null) {
@@ -672,18 +672,13 @@ class IncidentDetourNotifier extends StateNotifier<IncidentDetourState> {
     _stomp.subscribeRaw(_queueIncident, (rawBody) {
       if (!mounted || rawBody == null) return;
       try {
-        // 서버가 List<String> 또는 List<Map> JSON 배열로 전송
-        // Map인 경우 'incident' 키의 값을 꺼냄
+        // 서버가 List<String> JSON 배열로 전송: ["메시지1", "메시지2", ...]
         final decoded = jsonDecode(rawBody.trim());
         final List<String> messages;
         if (decoded is List) {
-          messages = decoded.map((e) {
-            if (e is Map) {
-              return (e['incident'] ?? e['message'] ?? e['description'] ?? '').toString();
-            }
-            return e.toString();
-          }).where((m) => m.isNotEmpty).toList();
+          messages = decoded.map((e) => e.toString()).toList();
         } else if (decoded is String) {
+          // 혹시 단일 String으로 오는 경우 fallback 처리
           messages = [decoded];
         } else {
           messages = [];

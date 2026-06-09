@@ -2110,7 +2110,11 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                       ),
                     ),
                   ),
-
+                  const SizedBox(width: 8),
+                  // ✅ [수정1] 새로고침 버튼
+                  _RefreshButton(
+                    onTap: () => ref.read(homeProvider.notifier).refresh(),
+                  ),
                 ],
               ),
             ),
@@ -5418,6 +5422,75 @@ class _MapZoomButton extends StatelessWidget {
           ],
         ),
         child: Icon(icon, size: 20, color: AppColors.textPrimary),
+      ),
+    );
+  }
+}
+// ✅ [수정1] 새로고침 버튼 위젯
+// ───────────────────────────────────────────────
+class _RefreshButton extends StatefulWidget {
+  final VoidCallback onTap;
+  const _RefreshButton({required this.onTap});
+
+  @override
+  State<_RefreshButton> createState() => _RefreshButtonState();
+}
+
+class _RefreshButtonState extends State<_RefreshButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  bool _spinning = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _handleTap() async {
+    if (_spinning) return;
+    setState(() => _spinning = true);
+    _ctrl.repeat();
+    widget.onTap();
+    await Future.delayed(const Duration(milliseconds: 1200));
+    if (mounted) {
+      _ctrl.stop();
+      _ctrl.reset();
+      setState(() => _spinning = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _handleTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: RotationTransition(
+          turns: _ctrl,
+          child: const Icon(Icons.refresh_rounded, size: 22, color: AppColors.primary),
+        ),
       ),
     );
   }

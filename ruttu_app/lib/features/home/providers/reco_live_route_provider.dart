@@ -217,6 +217,8 @@ class RecoLiveRouteNotifier extends StateNotifier<RecoLiveRouteState> {
   /// 3. detourModelList 메모리 또는 GET /reco/detour/{pathId} → 경로 상세 fetch
   /// 4. GPS 스트림 시작 → /app/location/reco 전송
   Future<void> initDetour(int pathId) async {
+    // 이미 초기화 진행 중이거나 완료된 경우 중복 호출 방지
+    if (state.isRouteLoading || state.routeDetail != null) return;
     state = state.copyWith(
       isRouteLoading: true,
       clearError:     true,
@@ -279,6 +281,8 @@ class RecoLiveRouteNotifier extends StateNotifier<RecoLiveRouteState> {
   ///
   /// GPS 전송을 homeProvider.status에 의존하지 않고 자체 관리.
   Future<void> init(int recoId) async {
+    // 이미 초기화 진행 중이거나 완료된 경우 중복 호출 방지
+    if (state.isRouteLoading || state.routeDetail != null) return;
     state = state.copyWith(
       isRouteLoading: true,
       clearError:     true,

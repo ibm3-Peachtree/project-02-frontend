@@ -19,17 +19,6 @@ class _MyCommunityActivityScreenState
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  Future<void> _openPost(int postId) async {
-    await context.push(
-      RouteConstants.postDetail.replaceFirst(':id', '$postId'),
-    );
-
-    if (!mounted) return;
-
-    await ref.read(feedProvider.notifier).loadMyPosts();
-    await ref.read(feedProvider.notifier).load();
-  }
-
   @override
   void initState() {
     super.initState();
@@ -75,10 +64,7 @@ class _MyCommunityActivityScreenState
               : RefreshIndicator(
                   onRefresh: () =>
                       ref.read(feedProvider.notifier).loadMyPosts(),
-                  child: _PostsTab(
-                    posts: myPosts,
-                    onPostTap: _openPost,
-                  ),
+                  child: _PostsTab(posts: myPosts),
                 ),
         ],
       ),
@@ -87,10 +73,9 @@ class _MyCommunityActivityScreenState
 }
 
 // ── 내가 쓴 글 탭 ───────────────────────────────────
-class _PostsTab extends ConsumerWidget {
+class _PostsTab extends StatelessWidget {
   final List<PostSummaryModel> posts;
-  final Future<void> Function(int) onPostTap;
-  const _PostsTab({required this.posts, required this.onPostTap});
+  const _PostsTab({required this.posts});
 
   Color _routeColor(String route) {
     if (route.contains('2호선'))   return Colors.green;
@@ -101,7 +86,7 @@ class _PostsTab extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     if (posts.isEmpty) {
       return const Center(
         child: Column(
@@ -135,7 +120,10 @@ class _PostsTab extends ConsumerWidget {
           ...posts.map((p) => Card(
                 margin: const EdgeInsets.only(bottom: 10),
                 child: InkWell(
-                  onTap: () => onPostTap(p.postId),
+                  onTap: () => context.push(
+                    RouteConstants.postDetail
+                        .replaceFirst(':id', '${p.postId}'),
+                  ),
                   borderRadius: BorderRadius.circular(12),
                   child: Padding(
                     padding: const EdgeInsets.all(14),
