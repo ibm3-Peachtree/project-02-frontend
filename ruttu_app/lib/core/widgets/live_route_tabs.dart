@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../core/constants/route_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/route_model.dart';
 import '../../features/home/providers/live_route_provider.dart';
 import '../../features/home/providers/home_provider.dart';
-import 'package:ruttu_app/features/home/screens/reco_live_route_screen.dart';
+import '../../features/home/providers/reco_live_route_provider.dart';
+import '../../features/home/screens/reco_live_route_screen.dart';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 루트 위젯 — 페이지에 배치
@@ -163,9 +166,10 @@ class _TabBar extends StatelessWidget {
         _TabChip(
           label: '나의 경로',
           isSelected: currentTab == RouteTab.my,
-          // 추천 경로가 활성 중이면 나의 경로 탭 비활성화
-          disabled: recoRouteActive,
-          onTap: recoRouteActive ? null : () => onTabChanged(RouteTab.my),
+          // ✅ [수정2] 추천 경로 활성 중에도 나의 경로 탭 접근 허용
+          // (나의 경로 탭에서 선택한 추천 경로 실시간 안내를 보여주므로)
+          disabled: false,
+          onTap: () => onTabChanged(RouteTab.my),
         ),
         const SizedBox(width: 8),
         _TabChip(
@@ -243,8 +247,9 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 추천/우회 경로 활성 중이면 나의 경로 로드 스킵
+      if (ref.read(recoRouteProvider).isActive) return;
       // 이미 route가 로드됐거나 로딩 중이면 재로드 스킵
-      // (루틴 상세 → 나의 경로 선택 시 외부에서 loadMyRoute를 먼저 호출하므로 중복 방지)
       final myState = ref.read(myRouteProvider);
       if (myState.isRouteLoading || myState.route != null || myState.isActive) return;
       final routineId = ref.read(homeProvider).activeRoutine?.routineId ?? 0;
@@ -254,43 +259,62 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(myRouteProvider);
+    final myState = ref.watch(myRouteProvider);
+    final recoState = ref.watch(recoRouteProvider);
+
+    // 추천/우회 경로 "이 경로로 변경" 완료 후 나의 경로 탭에 실시간 안내 표시
+    if (recoState.isActive) {
+      if (recoState.isSectionLoading || recoState.isRouteLoading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (recoState.route == null) {
+        return const Center(
+          child: Text('경로 정보를 불러오는 중...', style: TextStyle(color: AppColors.textSecondary)),
+        );
+      }
+      return _RouteDetail(
+        route: recoState.route!,
+        currentSection: recoState.currentSection,
+        onStop: () async {
+          await ref.read(recoRouteProvider.notifier).stopRecoRoute();
+        },
+      );
+    }
+
+    // ── 나의 경로 일반 흐름 ────────────────────────────────────────
 
     // route 최초 로딩 중
-    if (state.isRouteLoading) {
+    if (myState.isRouteLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (state.error != null && state.route == null) {
+    if (myState.error != null && myState.route == null) {
       return _ErrorView(
-        message: state.error!,
+        message: myState.error!,
         onRetry: () => ref.read(myRouteProvider.notifier).loadMyRoute(
               ref.read(homeProvider).activeRoutine?.routineId ?? 0),
       );
     }
 
     // route 로드 완료 — 시작 전
-    if (!state.isActive) {
+    if (!myState.isActive) {
       return _StartPrompt(
-        route: state.route,
-        isSectionLoading: state.isSectionLoading,
+        route: myState.route,
+        isSectionLoading: myState.isSectionLoading,
         description: '나의 설정 경로로 실시간 안내를 시작합니다.',
         buttonLabel: '시작',
         onStart: () async {
-                // 추천 경로가 활성화 중이면 나의 경로 시작 불가
-                if (ref.read(recoRouteProvider).isActive) return;
                 await ref.read(myRouteProvider.notifier).startMyRoute();
-                // 바텀시트 진입 시 전달된 콜백 호출 (홈 이동 등)
                 widget.onStart?.call();
               },
       );
     }
 
-    // 활성화 — 실시간 경로 표시
+    // 활성화 — 나의 경로 실시간 안내
     return _RouteDetail(
-      route: state.route!,
-      currentSection: state.currentSection,
-      onStop: () => ref.read(myRouteProvider.notifier).stopMyRoute(),
+      route: myState.route!,
+      currentSection: myState.currentSection,
+      onStop: () async => await ref.read(myRouteProvider.notifier).stopMyRoute(),
     );
   }
 }
@@ -310,16 +334,16 @@ class _RecoRouteTab extends ConsumerStatefulWidget {
 }
 
 class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
-  bool _hasLaunched = false;
+  bool _routeStartedFired = false;
 
   @override
   void initState() {
     super.initState();
+    _routeStartedFired = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _tryLoad();
       // incidentDetourProvider를 명시적으로 초기화 — STOMP /user/queue/incident 와
       // /user/queue/detour 구독이 확실히 시작되도록 보장.
-      // (provider가 처음 read될 때 IncidentDetourNotifier 생성 → _subscribeAll() 호출)
       ref.read(incidentDetourProvider);
     });
   }
@@ -358,44 +382,18 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
 
   Widget build(BuildContext context) {
     final state = ref.watch(recoRouteProvider);
-    // incidentDetourProvider를 watch → STOMP로 incident/detour 수신 시 리빌드 트리거.
-    // recoRouteProvider.applyIncidentDetour()가 이미 상태를 머지하지만,
-    // provider 생성 타이밍 문제로 첫 수신이 누락될 수 있으므로 이중 안전장치로 watch.
-    ref.watch(incidentDetourProvider);
 
-    // ── 이동 중 (경로 변경 완료) → RecoLiveRouteScreen을 rootNavigator overlay로 push
-    // 바텀 네비게이션 위로 전체 화면 오버레이되어 표시됨
-    if (state.isActive && !_hasLaunched) {
-      _hasLaunched = true;
-      final activeRecoId = state.selectedRecoId ?? state.selectedDetourPathId ?? 0;
-      final isDetour = state.selectedDetourPathId != null;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        Navigator.of(context, rootNavigator: true)
-            .push(
-          MaterialPageRoute<void>(
-            builder: (_) => RecoLiveRouteScreen(
-              key: ValueKey('reco_live_$activeRecoId'),
-              recoId: activeRecoId,
-              isDetour: isDetour,
-            ),
-          ),
-        )
-            .then((_) {
-          if (mounted) {
-            setState(() => _hasLaunched = false);
-            ref.read(recoRouteProvider.notifier).stopRecoRoute();
-          }
+    // isActive가 true로 바뀌는 순간 onRouteStarted 콜백 실행 (탭 전환)
+    ref.listen<RecoRouteState>(recoRouteProvider, (prev, next) {
+      if (!_routeStartedFired && next.isActive && !(prev?.isActive ?? false)) {
+        _routeStartedFired = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onRouteStarted?.call();
         });
-      });
-    }
-
-    // isActive が false になったら _hasLaunched をリセット
-    if (!state.isActive && _hasLaunched) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _hasLaunched = false);
-      });
-    }
+      }
+      // isActive가 false로 돌아오면 다음 경로 선택을 위해 플래그 초기화
+      if (!next.isActive) _routeStartedFired = false;
+    });
 
     // ✅ 버그 수정: "이 경로로 변경" 클릭 후 저장/로딩 중 상태 처리
     // isSaving=true 또는 isSectionLoading=true 인 경우 로딩 화면 표시
@@ -464,12 +462,16 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
     }
 
     // ── 목록 없음 (추천 경로도, 우회 경로도 없을 때)
-    final hasIncident = state.hasIncident;
-    final detourModelList = state.detourModelList; // STOMP push 우회 경로
-    final detourList = state.detourList;            // REST 응답 우회 경로
+    // incident·detour는 incidentDetourProvider에서 직접 읽어 머지 타이밍 문제 방지
+    final incidentState = ref.watch(incidentDetourProvider);
+    final hasIncident    = state.hasIncident || incidentState.hasIncident;
+    final detourModelList = incidentState.detourList.isNotEmpty
+        ? incidentState.detourList
+        : state.detourModelList;
+    final detourList = state.detourList;
     final recoList   = state.recoList;
 
-    if (recoList.isEmpty && detourList.isEmpty && detourModelList.isEmpty) {
+    if (recoList.isEmpty && detourList.isEmpty && detourModelList.isEmpty && !hasIncident) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -496,11 +498,11 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
     // detour 없음 → [추천 섹션, ...reco 카드]
     final hasDetour = detourModelList.isNotEmpty || detourList.isNotEmpty;
     final items = <_ListItem>[];
+    // 돌발 사고 배너: 우회 경로 유무와 무관하게 hasIncident면 항상 표시
+    if (hasIncident) {
+      items.add(const _ListItem.incidentBanner());
+    }
     if (hasDetour) {
-      // 배너는 incident 메시지가 있을 때만 (detour만 온 경우에도 hasIncident=true로 설정됨)
-      if (hasIncident) {
-        items.add(const _ListItem.incidentBanner());
-      }
       // STOMP로 받은 DetourModel 카드
       if (detourModelList.isNotEmpty) {
         items.add(const _ListItem.sectionLabel(isDetour: true));
@@ -523,6 +525,14 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
 
     return Column(
       children: [
+        // ── 새로고침 바 — 추천 탭 진입 시 항상 노출 ────────────────────────
+        _RecoRefreshBar(
+          isLoading: state.isRouteLoading,
+          onRefresh: () => ref.read(recoRouteProvider.notifier).loadRecoRouteList(
+            ref.read(homeProvider).activeRoutine?.routineId ?? 0,
+            force: true,
+          ),
+        ),
         Expanded(
           child: ListView.separated(
             controller: widget.scrollController,
@@ -539,8 +549,9 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
               switch (item.type) {
                 case _ItemType.incidentBanner:
                   return _IncidentBanner(
-                    message: state.incidentMessage ??
-                        '현재 경로에 돌발 상황이 발생했어요. 우회 경로를 확인해 보세요.',
+                    message: incidentState.incidentMessage
+                        ?? state.incidentMessage
+                        ?? '현재 경로에 돌발 상황이 발생했어요. 우회 경로를 확인해 보세요.',
                   );
                 case _ItemType.sectionLabel:
                   return _SectionLabel(isDetour: item.isDetour);
@@ -600,33 +611,32 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
           isSaving: state.isSaving || state.isSectionLoading,
           onKeep: widget.onKeep ?? () => Navigator.of(context).pop(),
           onSwitch: () async {
-            // 우회 경로 선택 시 → POST /me/routines/active/reco/detour/{pathId}
+            // 우회 경로 선택 시 → POST /reco/detour/{pathId} + STOMP /location/reco
             final detourId = state.selectedDetourPathId;
             if (detourId != null) {
-              if (!context.mounted) return;
-              // 인라인 표시: Navigator.push 대신 recoRouteProvider.saveAndStartDetourRoute 호출
-              // → isActive=true가 되면 _RecoRouteTab build()에서 RecoLiveRouteScreen이 인라인으로 표시됨
+              if (ref.read(myRouteProvider).isActive) return;
               await ref
                   .read(recoRouteProvider.notifier)
                   .saveAndStartDetourRoute(detourId);
+              // 탭 전환은 onRouteStarted 콜백으로 home_screen의 TabController가 처리
               if (context.mounted) widget.onRouteStarted?.call();
               return;
             }
-            // 추천 경로 선택 시 → POST /me/routines/active/reco/{recoId}
+            // 추천 경로 선택 시 → POST /me/routines/active/reco/detail/{recoId}
             final id = state.selectedRecoId;
             if (id == null) return;
             // 나의 경로가 활성화 중이면 추천 경로 시작 불가
             if (ref.read(myRouteProvider).isActive) return;
             // homeProvider에 isUsingRecoRoute=true 반영 → liveLocationProvider가
-            // 이후 GPS를 /app/reco로 전송하여 서버가 /user/queue/location/reco를 push
+            // 이후 GPS를 /app/location/reco로 전송
             await ref
                 .read(homeProvider.notifier)
                 .switchToRecommendedRoute(id);
             if (!context.mounted) return;
-            // 인라인 표시: Navigator.push 대신 recoRouteProvider.saveAndStartRecoRoute 호출
             await ref
                 .read(recoRouteProvider.notifier)
                 .saveAndStartRecoRoute(id);
+            // 탭 전환은 onRouteStarted 콜백으로 home_screen의 TabController가 처리
             if (context.mounted) widget.onRouteStarted?.call();
           },
         ),
@@ -673,6 +683,62 @@ class _ListItem {
 }
 
 // ── 돌발 사고 배너 ──────────────────────────────────────────────────────────
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 추천 경로 탭 — 풀-width 새로고침 바
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class _RecoRefreshBar extends StatelessWidget {
+  const _RecoRefreshBar({
+    required this.isLoading,
+    required this.onRefresh,
+  });
+
+  final bool isLoading;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: isLoading ? null : onRefresh,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF4F6FA),
+          border: Border(
+            bottom: BorderSide(color: const Color(0xFFE5E9F0), width: 1),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (isLoading)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.8,
+                  color: AppColors.primary,
+                ),
+              )
+            else
+              const Icon(Icons.refresh_rounded, size: 15, color: AppColors.primary),
+            const SizedBox(width: 6),
+            Text(
+              isLoading ? '불러오는 중...' : '경로 새로고침',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: isLoading ? AppColors.textSecondary : AppColors.primary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _IncidentBanner extends StatelessWidget {
   const _IncidentBanner({required this.message});
@@ -785,6 +851,16 @@ class _DetourModelCard extends StatefulWidget {
 }
 
 class _DetourModelCardState extends State<_DetourModelCard> {
+  String _formatDetourFare(int fare) {
+    final s = fare.toString();
+    final buf = StringBuffer();
+    for (int i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+      buf.write(s[i]);
+    }
+    return '${buf}원';
+  }
+
   @override
   Widget build(BuildContext context) {
     final detour = widget.detour;
@@ -859,7 +935,7 @@ class _DetourModelCardState extends State<_DetourModelCard> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        // 환승
+                        // 환승 + 요금
                         Row(
                           children: [
                             const Icon(Icons.sync_alt_rounded,
@@ -873,6 +949,18 @@ class _DetourModelCardState extends State<_DetourModelCard> {
                                   fontSize: 11,
                                   color: AppColors.textSecondary),
                             ),
+                            if (detour.cost > 0) ...[ 
+                              const SizedBox(width: 10),
+                              const Icon(Icons.monetization_on_outlined,
+                                  size: 12, color: AppColors.textSecondary),
+                              const SizedBox(width: 3),
+                              Text(
+                                _formatDetourFare(detour.cost),
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.textSecondary),
+                              ),
+                            ],
                           ],
                         ),
                       ],
@@ -1068,7 +1156,7 @@ class _RecoRouteCardState extends State<_RecoRouteCard> {
                               ),
                             ),
                             const SizedBox(width: 6),
-                            if (!widget.isDetour && route.payment > 0)
+                            if (route.payment > 0)
                               Text(
                                 _formatFare(route.payment),
                                 style: const TextStyle(
@@ -1485,7 +1573,7 @@ class _RecoDetailOverlay extends StatelessWidget {
                           const SizedBox(height: 4),
                           Row(
                             children: [
-                              if (!isDetour && route!.payment > 0) ...[
+                              if (route!.payment > 0) ...[
                                 const Icon(Icons.monetization_on_outlined,
                                     size: 14, color: AppColors.textSecondary),
                                 const SizedBox(width: 3),
@@ -1521,10 +1609,13 @@ class _RecoDetailOverlay extends StatelessWidget {
                               )),
                           const SizedBox(height: 14),
                           // 단계 목록 — _DetailPathItem 스타일
+                          // isDetour=true 여도 path 자체는 모두 전달하고,
+                          // _RecoDetailPathItem 내부에서 도보를 시각적으로 축소 표시
                           ...route!.path.asMap().entries.map((e) {
                             return _RecoDetailPathItem(
                               path: e.value,
                               isLast: e.key == route!.path.length - 1,
+                              isDetour: isDetour,
                             );
                           }),
                         ],
@@ -1579,9 +1670,14 @@ class _RecoDetailOverlay extends StatelessWidget {
 // ── 추천경로 상세보기 단계 아이템 (_DetailPathItem 스타일) ────────────────────
 
 class _RecoDetailPathItem extends StatefulWidget {
-  const _RecoDetailPathItem({required this.path, required this.isLast});
+  const _RecoDetailPathItem({
+    required this.path,
+    required this.isLast,
+    this.isDetour = false,
+  });
   final PathModel path;
   final bool isLast;
+  final bool isDetour;
 
   @override
   State<_RecoDetailPathItem> createState() => _RecoDetailPathItemState();
@@ -1590,11 +1686,20 @@ class _RecoDetailPathItem extends StatefulWidget {
 class _RecoDetailPathItemState extends State<_RecoDetailPathItem> {
   bool _expanded = false;
 
+  /// "강남역(2호선)" → "강남역"  /  숫자+호선 패턴 괄호만 제거
+  String _cleanStationName(String name) =>
+      name
+          .replaceAll(RegExp(r'\s*\(\d+호선\)'), '')
+          .replaceAll(RegExp(r'\s*\(\d+\)'), '')
+          .trim();
+
   @override
   Widget build(BuildContext context) {
     final path = widget.path;
     final isLast = widget.isLast;
+    final isDetour = widget.isDetour;
 
+    // 우회/일반 경로 모두 동일한 방식으로 도보 구간 표시
     final Color color = path.isWalking
         ? AppColors.textSecondary
         : path.isSubway
@@ -1618,7 +1723,8 @@ class _RecoDetailPathItemState extends State<_RecoDetailPathItem> {
             ? '${path.start} 승차'
             : path.isSubway ? '지하철 승차' : '버스 승차';
 
-    final bool hasStations = path.stationName.isNotEmpty;
+    // 도보 구간은 정류장 목록 펼치기 불가
+    final bool hasStations = !path.isWalking && path.stationName.isNotEmpty;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1815,7 +1921,7 @@ class _RecoDetailPathItemState extends State<_RecoDetailPathItem> {
                         const SizedBox(width: 8),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 2),
-                          child: Text(e.value,
+                          child: Text(_cleanStationName(e.value),
                               style: TextStyle(
                                   fontSize: 12,
                                   color: (isFirst || isLastStation)

@@ -222,7 +222,7 @@ class ApiHomeRepository implements HomeRepository {
       recoId: detour.pathId,
       totalDistance: detour.pathSegments.fold(0, (s, e) => s + e.totalDistanceM),
       totalTime: detour.totalDurationMin.round(),
-      payment: 0,
+      payment: detour.cost,
       path: paths,
       isDetour: true,
     );

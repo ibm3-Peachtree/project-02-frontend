@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../../data/repositories/home_repository_provider.dart';
 import '../../../data/models/routine_model.dart';
 import '../../../data/models/route_model.dart';
 import '../../../data/models/weather_model.dart';
 import '../../../data/repositories/home_repository.dart';
+import '../../../data/services/location_service.dart';
 import '../../../data/services/stomp_service.dart';
 import 'home_state.dart';
 import 'live_route_provider.dart' show recoRouteProvider;
@@ -38,6 +40,29 @@ class HomeNotifier extends StateNotifier<HomeState> {
 
   /// 출발 시간 감시 주기 — 1분마다 상태 갱신
   static const _departureCheckInterval = Duration(minutes: 1);
+
+  /// 자동 시작 감시 주기 — 30초마다 GPS 위치 체크
+  static const _autoStartInterval = Duration(seconds: 30);
+
+  /// 자동 종료 감시 주기 — 15초마다 GPS 위치 체크
+  static const _autoArriveInterval = Duration(seconds: 15);
+
+  /// 출발지 이탈 감지 반경 (미터) — 이 이상 벗어나면 자동 시작
+  static const _departureRadius = 150.0;
+
+  /// 목적지 도착 감지 반경 (미터) — 이 이내로 들어오면 자동 종료
+  static const _arrivalRadius = 100.0;
+
+  /// 자동 시작 GPS 감시 타이머 (preActive + 출발 권장 시간대에서 활성화)
+  Timer? _autoStartTimer;
+
+  /// 자동 종료 GPS 감시 타이머 (active 상태에서 활성화)
+  Timer? _autoArriveTimer;
+
+  /// 자동 시작이 이미 한 번 트리거됐는지 방지 플래그
+  bool _autoStartTriggered = false;
+
+  final LocationService _locationService = LocationService();
 
   HomeNotifier(this._repository, this._ref) : super(const HomeState());
 
@@ -157,6 +182,18 @@ class HomeNotifier extends StateNotifier<HomeState> {
   }
 
   /// ✅ [버그 수정] 루틴 상세 화면의 "지금 출발하기"에서 호출.
+  /// 홈 화면 새로고침 — preActive 상태에서 pull-to-refresh / 버튼 탭 시 호출.
+  /// isLoading을 올리지 않고 silent 모드로 데이터를 다시 불러온다.
+  Future<void> refresh() async {
+    if (state.status == HomeStatus.active) return; // 이동 중에는 갱신 불가
+    await initialize(silent: true);
+    // recoRouteProvider도 강제 새로고침
+    final routineId = state.activeRoutine?.routineId;
+    if (routineId != null) {
+      _ref.read(recoRouteProvider.notifier).loadRecoRouteList(routineId, force: true);
+    }
+  }
+
   /// 사용자가 선택한 특정 루틴을 activeRoutine으로 명시 지정한 뒤
   /// preActive 상태로 전환합니다.
   /// initialize()의 firstWhere 로직과 달리, 루틴이 여러 개일 때도
@@ -287,7 +324,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
     if (!isReco && section?.xy.isNotEmpty == true) {
       myCoords = section!.xy;
     } else if (!isReco && myCoords.isEmpty) {
-      myCoords = state.routeCoordinates;
+      // section.xy도 없고 routeCoordinates도 비어있으면 routineDetail.routeXy 사용
+      myCoords = state.activeRoutine?.routeXy ?? const [];
     }
     if (isReco && section?.xy.isNotEmpty == true) {
       recoCoords = section!.xy;
@@ -313,6 +351,10 @@ class HomeNotifier extends StateNotifier<HomeState> {
     // ✅ 폴링 + STOMP /user/queue/location/my 구독 동시 시작
     _startPolling();
     _subscribeLocationMy();
+
+    // 자동 시작 타이머 중단 (수동 시작 포함) + 자동 종료 타이머 시작
+    _stopAutoStartMonitor();
+    _startAutoArriveMonitor();
   }
 
   // ── STOMP /user/queue/location/my 구독 ────────────────────────────────
@@ -404,13 +446,154 @@ class HomeNotifier extends StateNotifier<HomeState> {
           'imminent=${state.isDepartureImminent} '
           'overdue=${state.isDepartureOverdue} '
           'minutesOverdue=${state.minutesOverdue}');
+
+      // 출발 권장 시간대가 되면 자동 시작 감시 시작
+      if ((state.isDepartureImminent || state.isDepartureOverdue) &&
+          _autoStartTimer == null) {
+        _startAutoStartMonitor();
+      }
     });
     debugPrint('[DepartureTimer] 출발 시간 감시 타이머 시작');
+
+    // 이미 출발 권장 시간대이면 즉시 자동 시작 감시 시작
+    if (state.isDepartureImminent || state.isDepartureOverdue) {
+      _startAutoStartMonitor();
+    }
   }
 
   void _startPolling() {
     _liveTimer?.cancel();
     _liveTimer = Timer.periodic(_pollInterval, (_) => _poll());
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 자동 시작 감시 — preActive + 출발 권장 시간대에서 출발지 이탈 감지
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  void _startAutoStartMonitor() {
+    if (_autoStartTimer != null) return; // 이미 실행 중
+    _autoStartTriggered = false;
+    debugPrint('[AutoStart] 출발 감지 타이머 시작 (반경 ${_departureRadius}m)');
+
+    _autoStartTimer = Timer.periodic(_autoStartInterval, (_) async {
+      if (!mounted) return;
+      // preActive 상태가 아니거나 이미 트리거됐으면 중단
+      if (state.status != HomeStatus.preActive || _autoStartTriggered) {
+        _stopAutoStartMonitor();
+        return;
+      }
+      await _checkAutoStart();
+    });
+
+    // 타이머 첫 tick을 기다리지 않고 즉시 한 번 체크
+    _checkAutoStart();
+  }
+
+  void _stopAutoStartMonitor() {
+    _autoStartTimer?.cancel();
+    _autoStartTimer = null;
+    debugPrint('[AutoStart] 출발 감지 타이머 중단');
+  }
+
+  Future<void> _checkAutoStart() async {
+    if (!mounted || state.status != HomeStatus.preActive) return;
+
+    // 출발 권장 시간대가 아니면 체크 안 함
+    if (!state.isDepartureImminent && !state.isDepartureOverdue) return;
+
+    // 출발지 좌표 가져오기 — routeXy 첫 번째 좌표 사용
+    final coords = state.activeRoutine?.routeXy ?? [];
+    if (coords.isEmpty) return;
+    final origin = coords.first;
+    if (origin.x == null || origin.y == null) return;
+
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) return;
+
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // x=경도(lng), y=위도(lat)
+      final dist = Geolocator.distanceBetween(
+        pos.latitude, pos.longitude,
+        origin.y!, origin.x!,
+      );
+
+      debugPrint('[AutoStart] 출발지까지 거리: ${dist.toStringAsFixed(0)}m '
+          '(기준 ${_departureRadius}m)');
+
+      if (dist > _departureRadius && !_autoStartTriggered) {
+        _autoStartTriggered = true;
+        _stopAutoStartMonitor();
+        debugPrint('[AutoStart] 출발지 이탈 감지 → 자동 시작');
+        await startRoute();
+      }
+    } catch (e) {
+      debugPrint('[AutoStart] GPS 오류 (무시됨): $e');
+    }
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 자동 종료 감시 — active 상태에서 목적지 도착 감지
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  void _startAutoArriveMonitor() {
+    if (_autoArriveTimer != null) return;
+    debugPrint('[AutoArrive] 도착 감지 타이머 시작 (반경 ${_arrivalRadius}m)');
+
+    _autoArriveTimer = Timer.periodic(_autoArriveInterval, (_) async {
+      if (!mounted) return;
+      if (state.status != HomeStatus.active) {
+        _stopAutoArriveMonitor();
+        return;
+      }
+      await _checkAutoArrive();
+    });
+  }
+
+  void _stopAutoArriveMonitor() {
+    _autoArriveTimer?.cancel();
+    _autoArriveTimer = null;
+    debugPrint('[AutoArrive] 도착 감지 타이머 중단');
+  }
+
+  Future<void> _checkAutoArrive() async {
+    if (!mounted || state.status != HomeStatus.active) return;
+
+    // 목적지 좌표 가져오기 — routeXy 마지막 좌표 사용
+    final coords = state.activeRoutine?.routeXy ?? [];
+    if (coords.isEmpty) return;
+    final dest = coords.last;
+    if (dest.x == null || dest.y == null) return;
+
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) return;
+
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      final dist = Geolocator.distanceBetween(
+        pos.latitude, pos.longitude,
+        dest.y!, dest.x!,
+      );
+
+      debugPrint('[AutoArrive] 목적지까지 거리: ${dist.toStringAsFixed(0)}m '
+          '(기준 ${_arrivalRadius}m)');
+
+      if (dist <= _arrivalRadius) {
+        _stopAutoArriveMonitor();
+        debugPrint('[AutoArrive] 목적지 도착 감지 → 자동 종료');
+        await arriveByGps();
+      }
+    } catch (e) {
+      debugPrint('[AutoArrive] GPS 오류 (무시됨): $e');
+    }
   }
 
   Future<void> _poll() async {
@@ -516,6 +699,7 @@ class HomeNotifier extends StateNotifier<HomeState> {
     _liveTimer?.cancel();
     _liveTimer = null;
     _unsubscribeLocationMy(); // ✅ 도착 시 구독 해제
+    _stopAutoArriveMonitor(); // 자동 종료 타이머 정리
 
     final routineId = state.activeRoutine?.routineId;
     final departure = state.departureTime;
@@ -562,6 +746,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
     _liveTimer?.cancel();
     _liveTimer = null;
     _unsubscribeLocationMy(); // ✅ 종료 시 구독 해제
+    _stopAutoArriveMonitor(); // 자동 종료 타이머 정리
+    _stopAutoStartMonitor();  // 혹시 남아있을 자동 시작 타이머 정리
 
     final routineId = state.activeRoutine?.routineId;
     final departure = state.departureTime;
@@ -652,10 +838,6 @@ class HomeNotifier extends StateNotifier<HomeState> {
         'station=${section.currentXY?.stationName} recoCoords=${newRecoCoords.length}개');
   }
 
-  Future<void> refresh() async {
-    await initialize(silent: true);
-  }
-
   Future<void> switchToRecommendedRoute(int recoId) async {
     state = state.copyWith(isLoading: true);
 
@@ -707,17 +889,20 @@ class HomeNotifier extends StateNotifier<HomeState> {
     // 추천 경로로 전환 시 나의 경로 STOMP 구독 해제 (불필요한 수신 방지)
     _unsubscribeLocationMy();
 
+    // status를 active로 전환 후 polling 시작
+    // (startRoute()를 호출하면 myRoute까지 같이 활성화되므로 직접 처리)
     if (state.status != HomeStatus.active) {
-      await startRoute();
-    } else {
-      _startPolling();
+      state = state.copyWith(status: HomeStatus.active);
     }
+    _startPolling();
   }
 
   @override
   void dispose() {
     _liveTimer?.cancel();
     _departureTimer?.cancel();
+    _autoStartTimer?.cancel();
+    _autoArriveTimer?.cancel();
     _unsubscribeLocationMy(); // ✅ dispose 시 구독 해제
     super.dispose();
   }

@@ -2,8 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../data/models/weather_model.dart';
 import '../../../data/models/route_model.dart';
-import '../../../data/repositories/briefing_repository.dart';
-import '../../auth/providers/auth_provider.dart';
+import '../../../data/repositories/briefing_repository.dart' show BriefingRepository, ApiBriefingRepository, GeminiSuppliesModel, AiSummaryModel, ScheduleItemModel;
 import '../../auth/providers/network_provider.dart';
 
 final briefingRepositoryProvider = Provider<BriefingRepository>((ref) =>
@@ -22,6 +21,11 @@ class BriefingState {
   final String? weatherError;
   final List<BriefingCalendarGroup> calendarGroups;
   final String? calendarError;
+  // 준비물 API 결과 (GET /me/briefing/supplies)
+  final GeminiSuppliesModel? suppliesResult;
+  final String? suppliesError;
+  // 오늘의 브리핑 요약 (POST /me/briefing/summary)
+  final String? todayBriefing;
 
   const BriefingState({
     this.weather,
@@ -35,6 +39,9 @@ class BriefingState {
     this.weatherError,
     this.calendarGroups = const [],
     this.calendarError,
+    this.suppliesResult,
+    this.suppliesError,
+    this.todayBriefing,
   });
 
   BriefingState copyWith({
@@ -49,6 +56,9 @@ class BriefingState {
     String? weatherError,
     List<BriefingCalendarGroup>? calendarGroups,
     String? calendarError,
+    GeminiSuppliesModel? suppliesResult,
+    String? suppliesError,
+    String? todayBriefing,
   }) =>
       BriefingState(
         weather:             weather             ?? this.weather,
@@ -62,29 +72,25 @@ class BriefingState {
         weatherError:        weatherError        ?? this.weatherError,
         calendarGroups:      calendarGroups      ?? this.calendarGroups,
         calendarError:       calendarError       ?? this.calendarError,
+        suppliesResult:      suppliesResult      ?? this.suppliesResult,
+        suppliesError:       suppliesError       ?? this.suppliesError,
+        todayBriefing:       todayBriefing       ?? this.todayBriefing,
       );
 }
 
 final briefingProvider =
     StateNotifierProvider<BriefingNotifier, BriefingState>(
-  (ref) => BriefingNotifier(
-    ref.read(briefingRepositoryProvider),
-    ref.read(authProvider).user?.userId,
-  ),
+  (ref) => BriefingNotifier(ref.read(briefingRepositoryProvider)),
 );
 
 class BriefingNotifier extends StateNotifier<BriefingState> {
   final BriefingRepository _repository;
-  final int? _userId;
 
-  BriefingNotifier(this._repository, this._userId)
-      : super(const BriefingState());
+  BriefingNotifier(this._repository) : super(const BriefingState());
 
   Future<void> load() async {
     state = state.copyWith(isLoading: true);
 
-    // 각 항목이 실패해도 나머지는 정상 표시되도록 개별 처리
-    // API 개발 완료 전까지 mock이 사용되며, 실제 API 전환 후에도 안전하게 동작합니다.
     WeatherAirQualityModel? weather;
     List<IssueModel> issues = const [];
     List<ScheduleItemModel> scheduleItems = const [];
@@ -96,14 +102,14 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
     String? weatherError;
     List<BriefingCalendarGroup> calendarGroups = const [];
     String? calendarError;
+    GeminiSuppliesModel? suppliesResult;
+    String? suppliesError;
 
-    // 모든 API를 한 번에 병렬 호출 — 순차 대기 제거로 로딩 시간 단축
+    // 날씨·준비물·일정을 병렬로 먼저 가져옴
     await Future.wait([
       () async { try { weather = await _repository.getWeatherAirQuality(); } catch (_) {} }(),
       () async { try { issues = await _repository.getTodayIssues(); } catch (_) {} }(),
       () async { try { meetingRoute = await _repository.getMeetingRoute(); } catch (_) {} }(),
-      if (_userId != null)
-        () async { try { aiSummary = await _repository.getAiSummary(_userId!); } catch (_) {} }(),
       () async {
         try {
           originWeather = await _repository.getOriginWeather();
@@ -134,7 +140,34 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
           debugPrint('[BriefingCalendar] STACK: $st');
         }
       }(),
+      () async {
+        try {
+          suppliesResult = await _repository.getSupplies();
+        } catch (e, st) {
+          suppliesError = '준비물 정보를 불러오지 못했어요.';
+          debugPrint('[Supplies] ERROR: $e');
+          debugPrint('[Supplies] STACK: $st');
+        }
+      }(),
     ]);
+
+    // 날씨·준비물·일정 데이터를 String으로 조합해 POST → AI 요약 수신
+    String? todayBriefing;
+    try {
+      final contents = _buildSummaryContents(
+        originWeather:      originWeather,
+        destinationWeather: destinationWeather,
+        supplies:           suppliesResult,
+        calendarGroups:     calendarGroups,
+      );
+      if (contents.isNotEmpty) {
+        todayBriefing = await _repository.getTodayBriefing(contents);
+        debugPrint('[TodayBriefing] result length: ${todayBriefing?.length}');
+      }
+    } catch (e, st) {
+      debugPrint('[TodayBriefing] ERROR: $e');
+      debugPrint('[TodayBriefing] STACK: $st');
+    }
 
     state = BriefingState(
       weather:            weather,
@@ -147,6 +180,62 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
       weatherError:       weatherError,
       calendarGroups:     calendarGroups,
       calendarError:      calendarError,
+      suppliesResult:     suppliesResult,
+      suppliesError:      suppliesError,
+      todayBriefing:      todayBriefing,
     );
+  }
+
+  /// 날씨·준비물·일정을 백엔드가 요약할 수 있는 자연어 String으로 조합
+  String _buildSummaryContents({
+    required BriefingWeatherModel? originWeather,
+    required BriefingWeatherModel? destinationWeather,
+    required GeminiSuppliesModel? supplies,
+    required List<BriefingCalendarGroup> calendarGroups,
+  }) {
+    final buf = StringBuffer();
+
+    if (originWeather != null) {
+      buf.writeln('[출발지 날씨]');
+      buf.writeln('위치: ${originWeather.locationName}');
+      buf.writeln('현재 기온: ${originWeather.tmp.toStringAsFixed(0)}°C '
+          '(최저 ${originWeather.minTemp.toStringAsFixed(0)}°C / '
+          '최고 ${originWeather.maxTemp.toStringAsFixed(0)}°C)');
+      buf.writeln('날씨: ${originWeather.sky}');
+      if (originWeather.pm10.isNotEmpty)
+        buf.writeln('미세먼지: ${originWeather.pm10}');
+      if (originWeather.pm25.isNotEmpty)
+        buf.writeln('초미세먼지: ${originWeather.pm25}');
+    }
+
+    if (destinationWeather != null) {
+      buf.writeln('[도착지 날씨]');
+      buf.writeln('위치: ${destinationWeather.locationName}');
+      buf.writeln('현재 기온: ${destinationWeather.tmp.toStringAsFixed(0)}°C');
+      buf.writeln('날씨: ${destinationWeather.sky}');
+    }
+
+    if (supplies != null) {
+      buf.writeln('[오늘의 준비물]');
+      if (supplies.clothes.isNotEmpty) buf.writeln('옷차림: ${supplies.clothes}');
+      if (supplies.supplies.isNotEmpty) buf.writeln('챙길 것: ${supplies.supplies}');
+    }
+
+    final allEvents = calendarGroups.expand((g) => g.items).toList()
+      ..sort((a, b) => (a.start?.value ?? 0).compareTo(b.start?.value ?? 0));
+
+    if (allEvents.isNotEmpty) {
+      buf.writeln('[오늘의 일정]');
+      for (final e in allEvents) {
+        final time = e.startTimeLabel;
+        buf.write('$time ${e.summary}');
+        if (e.location != null && e.location!.isNotEmpty) {
+          buf.write(' (${e.location})');
+        }
+        buf.writeln();
+      }
+    }
+
+    return buf.toString().trim();
   }
 }

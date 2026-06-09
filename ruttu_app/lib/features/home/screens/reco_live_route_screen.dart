@@ -36,6 +36,7 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
   // 정거장 목록 펼침 상태 (pathIndex → expanded)
   final Map<int, bool> _expandedStops = {};
   NaverMapController? _mapController;
+  bool _currentMarkerAdded = false;
   // _onMapReady 시점에 routeDetail이 아직 없으면 true로 설정,
   // 이후 routeDetail이 도착했을 때 지도를 그린다.
   bool _pendingDraw = false;
@@ -68,6 +69,7 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
   // 경로 데이터가 바뀌면 지도에 다시 그림
   void _onMapReady(NaverMapController controller) {
     _mapController = controller;
+    _currentMarkerAdded = false; // 새 컨트롤러 — 마커 추적 리셋
     final state = ref.read(recoLiveRouteProvider);
     if (state.routeDetail != null) {
       _drawRoute(controller, state);
@@ -195,11 +197,17 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
     if (ctrl == null) return;
     final cur = section.currentXY;
     if (cur == null || cur.x == null || cur.y == null) return;
-    await ctrl.deleteOverlay(NOverlayInfo(type: NOverlayType.marker, id: 'reco_current'));
+    // 이미 추가된 경우에만 삭제 — 처음 호출 시 deleteOverlay assertion 방지
+    if (_currentMarkerAdded) {
+      try {
+        await ctrl.deleteOverlay(NOverlayInfo(type: NOverlayType.marker, id: 'reco_current'));
+      } catch (_) {}
+    }
     await ctrl.addOverlay(
       NMarker(id: 'reco_current', position: NLatLng(cur.y!, cur.x!))
         ..setCaption(NOverlayCaption(text: '현재', textSize: 12)),
     );
+    _currentMarkerAdded = true;
     await ctrl.updateCamera(NCameraUpdate.scrollAndZoomTo(
       target: NLatLng(cur.y!, cur.x!),
       zoom: 15,
@@ -236,6 +244,15 @@ class _RecoLiveRouteScreenState extends ConsumerState<RecoLiveRouteScreen> {
             }
           }
         });
+      }
+      // 자동 종료 감지: routeDetail이 있다가 사라지고 isCompleting도 false가 되면
+      // completeAndStop()이 완료됐다는 신호 → 화면 자동 닫기
+      if (prev?.routeDetail != null &&
+          next.routeDetail == null &&
+          !next.isCompleting &&
+          mounted) {
+        debugPrint('[RecoLiveRouteScreen] 자동 종료 감지 → 화면 닫기');
+        Navigator.of(context).pop();
       }
     });
 
@@ -976,6 +993,10 @@ class _LivePathItem extends StatelessWidget {
     return path.isSubway ? '지하철 승차' : '버스 승차';
   }
 
+  /// "강남역(2호선)" → "강남역"  / "(숫자+호선)" 괄호만 제거
+  static String _stripLineName(String name) =>
+      name.replaceAll(RegExp(r'\(\d+호선\)'), '').trim();
+
   @override
   Widget build(BuildContext context) {
     // 도보 구간은 정거장 목록 표시 안 함
@@ -1158,7 +1179,7 @@ class _LivePathItem extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.only(bottom: 2),
                           child: Text(
-                            e.value,
+                            _stripLineName(e.value),
                             style: TextStyle(
                               fontSize: 12,
                               color: (isFirst || isLastStation)

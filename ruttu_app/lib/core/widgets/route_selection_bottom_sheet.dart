@@ -155,6 +155,8 @@ class _RouteSelectionSheetState extends ConsumerState<_RouteSelectionSheet> {
           onRouteStarted: () {
             // 추천 경로 안내 시작 시 바텀시트 닫고 홈으로 이동
             Navigator.of(context).pop();
+            // 추천 경로 탭으로 전환
+            ref.read(selectedRouteTabProvider.notifier).state = RouteTab.reco;
             if (context.mounted) context.go(RouteConstants.home);
           },
         );
@@ -366,6 +368,8 @@ class _MyRouteStepState extends ConsumerState<_MyRouteStep> {
       onStart: () async {
         // 바텀시트 닫기
         Navigator.of(context).pop();
+        // 나의 경로 탭으로 전환
+        ref.read(selectedRouteTabProvider.notifier).state = RouteTab.my;
         // 홈으로 이동
         if (context.mounted) context.go(RouteConstants.home);
         // 나의 경로 안내 시작

@@ -63,7 +63,7 @@ class _BriefingScreenState extends ConsumerState<BriefingScreen> {
               ),
               children: [
                 // ① AI 요약 카드
-                _AiSummaryCard(summary: state.aiSummary),
+                _AiSummaryCard(summary: state.todayBriefing),
                 const SizedBox(height: 12),
 
                 // ③ 출발지/도착지 날씨 카드
@@ -89,10 +89,18 @@ class _BriefingScreenState extends ConsumerState<BriefingScreen> {
                     ),
                 ],
                 const SizedBox(height: 12),
-                // ④ 준비물 브리핑 카드 — 출발지 날씨 기준
-                if (state.originWeather != null)
-                  _BriefingPrepCard(weather: state.originWeather!),
-                if (state.originWeather != null)
+                // ④ 준비물 브리핑 카드 — supplies API 결과 우선, fallback: originWeather
+                if (state.suppliesResult != null)
+                  _BriefingPrepCard(
+                    clothes: state.suppliesResult!.clothes,
+                    supplies: state.suppliesResult!.supplies,
+                  )
+                else if (state.originWeather != null)
+                  _BriefingPrepCard(
+                    clothes: state.originWeather!.clothes,
+                    supplies: state.originWeather!.supplies,
+                  ),
+                if (state.suppliesResult != null || state.originWeather != null)
                   const SizedBox(height: 12),
 
                 // ⑤ 오늘의 일정 카드 (Google Calendar)
@@ -348,8 +356,9 @@ class _AirBadge extends StatelessWidget {
 
 // ── ⑧ 새 준비물 카드 (clothes / supplies 텍스트 직접 표시) ────────────────
 class _BriefingPrepCard extends StatelessWidget {
-  final BriefingWeatherModel weather;
-  const _BriefingPrepCard({required this.weather});
+  final String clothes;
+  final String supplies;
+  const _BriefingPrepCard({required this.clothes, required this.supplies});
 
   /// 쉼표로 구분된 아이템 목록으로 파싱
   List<String> _parseItems(String raw) {
@@ -388,12 +397,12 @@ class _BriefingPrepCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              weather.clothes.isEmpty ? '정보 없음' : weather.clothes,
+              clothes.isEmpty ? '정보 없음' : clothes,
               style: const TextStyle(fontSize: 14, height: 1.5),
             ),
 
             // ── 준비물 ──
-            if (weather.supplies.isNotEmpty) ...[
+            if (supplies.isNotEmpty) ...[
               const SizedBox(height: 16),
               const Divider(height: 1),
               const SizedBox(height: 16),
@@ -403,7 +412,7 @@ class _BriefingPrepCard extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                weather.supplies,
+                supplies,
                 style: const TextStyle(fontSize: 14, height: 1.5),
               ),
             ],
@@ -1259,7 +1268,7 @@ class _WeatherErrorCard extends StatelessWidget {
 }
 
 class _AiSummaryCard extends StatelessWidget {
-  final AiSummaryModel? summary;
+  final String? summary;
   const _AiSummaryCard({required this.summary});
 
   @override
@@ -1305,7 +1314,7 @@ class _AiSummaryCard extends StatelessWidget {
                     ),
                   )
                 : Text(
-                    summary!.summary,
+                    summary!,
                     style: const TextStyle(fontSize: 14, height: 1.6),
                   ),
           ),

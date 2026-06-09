@@ -2110,6 +2110,7 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                       ),
                     ),
                   ),
+
                 ],
               ),
             ),
@@ -2138,18 +2139,23 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                     child: TabBarView(
                       controller: _tabController,
                       children: [
-                        SingleChildScrollView(
-                          controller: scrollController,
-                          child: _PreActivePanel(
-                            routine: routine,
-                            isImminent: isImminent,
-                            isOverdue: isOverdue,
-                            minutesOverdue: minutesOverdue,
-                            aiSummary: ref
-                                .watch(briefingProvider)
-                                .aiSummary
-                                ?.summary,
-                            myRoute: home.myRoute,
+                        // ✅ [수정1] pull-to-refresh — homeProvider.refresh() 호출
+                        RefreshIndicator(
+                          onRefresh: () => ref.read(homeProvider.notifier).refresh(),
+                          child: SingleChildScrollView(
+                            controller: scrollController,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            child: _PreActivePanel(
+                              routine: routine,
+                              isImminent: isImminent,
+                              isOverdue: isOverdue,
+                              minutesOverdue: minutesOverdue,
+                              aiSummary: ref
+                                  .watch(briefingProvider)
+                                  .aiSummary
+                                  ?.summary,
+                              myRoute: home.myRoute,
+                            ),
                           ),
                         ),
                         // ── 추천 경로 탭 ──────────────────────────────────
@@ -2160,6 +2166,8 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                           // "현재 경로 유지" 버튼: Navigator.pop() 대신 탭 전환
                           // (DraggableScrollableSheet 내 TabBarView에 있으므로 pop하면 홈이 사라짐)
                           onKeep: () => _tabController.animateTo(0),
+                          // "이 경로로 변경" 완료 후 나의 경로 탭으로 전환
+                          onRouteStarted: () => _tabController.animateTo(0),
                         ),
                       ],
                     ),
@@ -2244,7 +2252,9 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
         final home = ref.read(homeProvider);
         final activeCoords = home.isUsingRecoRoute
             ? home.recoRouteCoordinates
-            : home.routeCoordinates;
+            : (home.routeCoordinates.isNotEmpty
+                ? home.routeCoordinates
+                : (home.activeRoutine?.routeXy ?? const []));
         await _drawRouteOnMap(controller, activeCoords);
         return; // _drawRouteOnMap 내부에서 GPS 마커 + 카메라도 처리
       }
@@ -2449,7 +2459,11 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     ref.listen<HomeState>(homeProvider, (prev, next) {
       if (_mapController == null) return;
       final isReco = next.isUsingRecoRoute;
-      final activeCoords = isReco ? next.recoRouteCoordinates : next.routeCoordinates;
+      final activeCoords = isReco
+          ? next.recoRouteCoordinates
+          : (next.routeCoordinates.isNotEmpty
+              ? next.routeCoordinates
+              : (next.activeRoutine?.routeXy ?? const []));
       final prevActiveCoords = isReco ? prev?.recoRouteCoordinates : prev?.routeCoordinates;
       final coordsChanged = prevActiveCoords != activeCoords;
       final stepChanged = prev?.currentStepIndex != next.currentStepIndex;
@@ -2464,7 +2478,12 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     // 현재 활성 탭에 맞는 경로 및 좌표
     final isUsingReco = home.isUsingRecoRoute;
     final activeRoute = isUsingReco ? home.recommendedRoute : home.myRoute;
-    final activeCoords = isUsingReco ? home.recoRouteCoordinates : home.routeCoordinates;
+    // routeCoordinates가 비어있으면 routineDetail.routeXy로 fallback
+    final activeCoords = isUsingReco
+        ? home.recoRouteCoordinates
+        : (home.routeCoordinates.isNotEmpty
+            ? home.routeCoordinates
+            : (home.activeRoutine?.routeXy ?? const []));
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -2616,6 +2635,8 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                           scrollController: scrollController,
                           // "현재 경로 유지" 버튼: Navigator.pop() 대신 탭 전환
                           onKeep: () => _tabController.animateTo(0),
+                          // "이 경로로 변경" 완료 후 나의 경로 탭으로 전환
+                          onRouteStarted: () => _tabController.animateTo(0),
                         ),
                       ],
                     ),

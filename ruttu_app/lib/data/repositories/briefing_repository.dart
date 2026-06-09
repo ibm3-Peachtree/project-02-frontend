@@ -32,6 +32,20 @@ class ScheduleItemModel {
   });
 }
 
+// GET /me/briefing/supplies → GeminiSuppliesResultDto
+class GeminiSuppliesModel {
+  final String clothes;
+  final String supplies;
+
+  const GeminiSuppliesModel({required this.clothes, required this.supplies});
+
+  factory GeminiSuppliesModel.fromJson(Map<String, dynamic> json) =>
+      GeminiSuppliesModel(
+        clothes:  (json['clothes']  ?? '').toString(),
+        supplies: (json['supplies'] ?? '').toString(),
+      );
+}
+
 abstract class BriefingRepository {
   Future<WeatherAirQualityModel> getWeatherAirQuality();
   Future<List<IssueModel>> getTodayIssues();
@@ -43,6 +57,9 @@ abstract class BriefingRepository {
   Future<BriefingWeatherModel?> getOriginWeather();
   Future<BriefingWeatherModel?> getDestinationWeather();
   Future<List<BriefingCalendarGroup>> getBriefingCalendar();
+  Future<GeminiSuppliesModel?> getSupplies();
+  /// 날씨·준비물·일정을 String으로 조합해 POST → AI 요약 텍스트 반환
+  Future<String?> getTodayBriefing(String contents);
 }
 // ── 실제 API 구현체 ──────────────────────────────────────────────────────────
 
@@ -104,6 +121,35 @@ class ApiBriefingRepository implements BriefingRepository {
     debugPrint('[BriefingRepo] parsed ${groups.length} groups, '
         '${groups.expand((g) => g.items).length} events');
     return groups;
+  }
+
+  @override
+  Future<GeminiSuppliesModel?> getSupplies() async {
+    try {
+      final res = await _dio.get(ApiConstants.briefingSupplies);
+      if (res.statusCode == 204 || res.data == null) return null;
+      return GeminiSuppliesModel.fromJson(res.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      debugPrint('[BriefingRepo] getSupplies error: $e');
+      if (e.response?.statusCode == 409) return null;
+      rethrow;
+    }
+  }
+
+  @override
+  Future<String?> getTodayBriefing(String contents) async {
+    try {
+      final res = await _dio.post(
+        ApiConstants.briefingSummary,
+        data: contents,
+        options: Options(headers: {'Content-Type': 'text/plain; charset=utf-8'}),
+      );
+      if (res.statusCode == 204 || res.data == null) return null;
+      return res.data.toString();
+    } on DioException catch (e) {
+      debugPrint('[BriefingRepo] getTodayBriefing error: $e');
+      return null;
+    }
   }
 
   /// 스케줄 카드용: 모든 캘린더 그룹의 이벤트를 시간순으로 병합
@@ -217,6 +263,16 @@ class MockBriefingRepository implements BriefingRepository {
 
   @override
   Future<List<BriefingCalendarGroup>> getBriefingCalendar() async {
+    throw UnimplementedError('Use ApiBriefingRepository for real data');
+  }
+
+  @override
+  Future<GeminiSuppliesModel?> getSupplies() async {
+    throw UnimplementedError('Use ApiBriefingRepository for real data');
+  }
+
+  @override
+  Future<String?> getTodayBriefing(String contents) async {
     throw UnimplementedError('Use ApiBriefingRepository for real data');
   }
 

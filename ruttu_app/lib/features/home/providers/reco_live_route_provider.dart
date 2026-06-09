@@ -79,6 +79,15 @@ class RecoLiveRouteNotifier extends StateNotifier<RecoLiveRouteState> {
   /// STOMP section 수신 시 외부(home_provider)에 알리는 콜백.
   void Function(CurrentSectionModel)? onSectionUpdate;
 
+  /// 자동 종료 감시 타이머
+  Timer? _autoArriveTimer;
+
+  /// 목적지 도착 감지 반경 (미터)
+  static const _arrivalRadius = 100.0;
+
+  /// 자동 종료 체크 주기
+  static const _autoArriveInterval = Duration(seconds: 15);
+
   // ── GPS 전송 ─────────────────────────────────────────────────────
   //
   // 문제: connect()는 activate()만 호출하고 실제 연결 완료(onConnect)를 기다리지 않는다.
@@ -127,12 +136,77 @@ class RecoLiveRouteNotifier extends StateNotifier<RecoLiveRouteState> {
       onError: (e) => debugPrint('[RecoLiveRoute] GPS 스트림 에러: $e'),
     );
     debugPrint('[RecoLiveRoute] GPS 스트림 시작');
+
+    // GPS 시작 후 자동 도착 감지 타이머도 함께 시작
+    _startAutoArriveMonitor();
   }
 
   void _stopGps() {
     _gpsSub?.cancel();
     _gpsSub = null;
     debugPrint('[RecoLiveRoute] GPS 종료');
+  }
+
+  // ── 자동 도착 감지 ────────────────────────────────────────────────────
+  void _startAutoArriveMonitor() {
+    if (_autoArriveTimer != null) return;
+    debugPrint('[RecoLiveRoute/AutoArrive] 도착 감지 타이머 시작 (반경 ${_arrivalRadius}m)');
+
+    _autoArriveTimer = Timer.periodic(_autoArriveInterval, (_) async {
+      if (!mounted) return;
+      await _checkAutoArrive();
+    });
+  }
+
+  void _stopAutoArriveMonitor() {
+    _autoArriveTimer?.cancel();
+    _autoArriveTimer = null;
+    debugPrint('[RecoLiveRoute/AutoArrive] 도착 감지 타이머 중단');
+  }
+
+  Future<void> _checkAutoArrive() async {
+    if (!mounted) return;
+
+    // 목적지 좌표: STOMP로 수신된 currentSection.xy의 마지막 유효 좌표
+    final xy = state.currentSection?.xy ?? [];
+    RouteXYModel? destCoord;
+    for (final coord in xy.reversed) {
+      if (coord.x != null && coord.y != null) {
+        destCoord = coord;
+        break;
+      }
+    }
+
+    if (destCoord == null) {
+      debugPrint('[RecoLiveRoute/AutoArrive] 목적지 좌표 미확보 — 다음 주기에 재시도');
+      return;
+    }
+
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) return;
+
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      final dist = Geolocator.distanceBetween(
+        pos.latitude, pos.longitude,
+        destCoord.y!, destCoord.x!,
+      );
+
+      debugPrint('[RecoLiveRoute/AutoArrive] 목적지까지 거리: '
+          '${dist.toStringAsFixed(0)}m (기준 ${_arrivalRadius}m)');
+
+      if (dist <= _arrivalRadius) {
+        _stopAutoArriveMonitor();
+        debugPrint('[RecoLiveRoute/AutoArrive] 목적지 도착 감지 → 자동 종료');
+        await completeAndStop();
+      }
+    } catch (e) {
+      debugPrint('[RecoLiveRoute/AutoArrive] GPS 오류 (무시됨): $e');
+    }
   }
 
   // ── init (우회 경로) ─────────────────────────────────────────────
@@ -266,6 +340,7 @@ class RecoLiveRouteNotifier extends StateNotifier<RecoLiveRouteState> {
   }) async {
     _stomp.unsubscribe(_queueLocationReco, subscriberKey: 'recoLiveRoute');
     _stopGps();
+    _stopAutoArriveMonitor();
 
     state = state.copyWith(isCompleting: true);
 
@@ -288,6 +363,7 @@ class RecoLiveRouteNotifier extends StateNotifier<RecoLiveRouteState> {
   void stop() {
     _stomp.unsubscribe(_queueLocationReco, subscriberKey: 'recoLiveRoute');
     _stopGps();
+    _stopAutoArriveMonitor();
     state = const RecoLiveRouteState();
   }
 
@@ -295,6 +371,7 @@ class RecoLiveRouteNotifier extends StateNotifier<RecoLiveRouteState> {
   void dispose() {
     _stomp.unsubscribe(_queueLocationReco, subscriberKey: 'recoLiveRoute');
     _stopGps();
+    _stopAutoArriveMonitor();
     super.dispose();
   }
 }

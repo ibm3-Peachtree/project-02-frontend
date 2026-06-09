@@ -98,6 +98,8 @@ class ApiConstants {
   static const briefingWeatherDestination = '/me/briefing/weather/destination';
   static const briefingCalendar   = '/me/briefing/calendar';
   static const briefingWeather = '/me/briefing/weather-air-quality';
+  static const briefingSupplies = '/me/briefing/supplies';
+  static const briefingSummary  = '/me/briefing/summary';
   // ── 14. Push ──────────────────────────────────────────────
   static const fcmToken = '/users/fcm-token';  // POST — FCM 토큰 서버 등록
   static const pushTest = '/push/test';         // POST — 테스트 푸시 (dev only)

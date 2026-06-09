@@ -36,6 +36,7 @@ class MyRouteState {
   final bool isRouteLoading;
   final bool isSectionLoading;
   final String? error;
+  final DateTime? departureTime;
 
   const MyRouteState({
     this.route,
@@ -44,6 +45,7 @@ class MyRouteState {
     this.isRouteLoading = false,
     this.isSectionLoading = false,
     this.error,
+    this.departureTime,
   });
 
   MyRouteState copyWith({
@@ -54,6 +56,7 @@ class MyRouteState {
     bool? isSectionLoading,
     String? error,
     bool clearError = false,
+    DateTime? departureTime,
   }) =>
       MyRouteState(
         route:            route            ?? this.route,
@@ -62,6 +65,7 @@ class MyRouteState {
         isRouteLoading:   isRouteLoading   ?? this.isRouteLoading,
         isSectionLoading: isSectionLoading ?? this.isSectionLoading,
         error:            clearError ? null : (error ?? this.error),
+        departureTime:    departureTime    ?? this.departureTime,
       );
 }
 
@@ -89,7 +93,7 @@ class MyRouteNotifier extends StateNotifier<MyRouteState> {
     if (state.isActive) return;
     // 백엔드에 /location/my REST 엔드포인트가 없으므로 STOMP push만 사용.
     // 구독 등록 후 서버가 push하면 currentSection이 채워진다.
-    state = state.copyWith(isActive: true, clearError: true);
+    state = state.copyWith(isActive: true, clearError: true, departureTime: DateTime.now());
     _subscribeLocationMy();
   }
 
@@ -107,8 +111,19 @@ class MyRouteNotifier extends StateNotifier<MyRouteState> {
     });
   }
 
-  void stopMyRoute() {
+  Future<void> stopMyRoute() async {
     _stomp.unsubscribe(_queueLocationMy);
+    // POST /me/routines/active/complete/my
+    final departure = state.departureTime;
+    final arrival   = DateTime.now();
+    if (departure != null) {
+      try {
+        await _repo.completeMyRoute(departureTime: departure, arrivalTime: arrival);
+        debugPrint('[MyRoute] completeMyRoute 전송 성공');
+      } catch (e) {
+        debugPrint('[MyRoute] completeMyRoute 실패 (무시됨): $e');
+      }
+    }
     // route 보존, 나머지 초기화
     state = MyRouteState(route: state.route);
   }
@@ -148,6 +163,7 @@ class RecoRouteState {
   final bool isRouteLoading;
   final bool isSectionLoading;
   final String? error;
+  final DateTime? departureTime;
 
   const RecoRouteState({
     this.recoList = const [],
@@ -166,6 +182,7 @@ class RecoRouteState {
     this.isRouteLoading = false,
     this.isSectionLoading = false,
     this.error,
+    this.departureTime,
   });
 
   RecoRouteState copyWith({
@@ -189,6 +206,7 @@ class RecoRouteState {
     bool clearDetail = false,
     bool clearSelectedRecoId = false,
     bool clearSelectedDetourPathId = false,
+    DateTime? departureTime,
   }) =>
       RecoRouteState(
         recoList:               recoList              ?? this.recoList,
@@ -207,6 +225,7 @@ class RecoRouteState {
         isRouteLoading:   isRouteLoading    ?? this.isRouteLoading,
         isSectionLoading: isSectionLoading  ?? this.isSectionLoading,
         error:            clearError ? null : (error ?? this.error),
+        departureTime:    departureTime     ?? this.departureTime,
       );
 }
 
@@ -338,7 +357,7 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
       recoId: detour.pathId,
       totalDistance: detour.pathSegments.fold(0, (s, e) => s + e.totalDistanceM),
       totalTime: detour.totalDurationMin.round(),
-      payment: 0,
+      payment: detour.cost,
       path: paths,
       isDetour: true,
     );
@@ -378,9 +397,10 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
       );
 
       state = state.copyWith(
-        route:    route,
-        isSaving: false,
-        isActive: true,
+        route:         route,
+        isSaving:      false,
+        isActive:      true,
+        departureTime: DateTime.now(),
       );
 
       // STOMP 구독 — 이후 서버 push로 currentSection 수신
@@ -424,9 +444,8 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
 
     state = state.copyWith(isSaving: true, clearError: true);
     try {
-      await _repo.saveRecoRoute(recoId);
-
-      // GET /me/routines/active/reco/{recoId} → RouteModel → LiveRouteModel 변환
+      // ※ homeProvider.switchToRecommendedRoute() 에서 이미 saveRecoRoute를 호출했으므로
+      // 여기서는 상세 조회 + 활성화만 수행
       final detailRoute = await _repo.getRecoRouteDetail(recoId);
       final route = LiveRouteModel(
         totalDistance: detailRoute.totalDistance,
@@ -438,9 +457,10 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
       );
 
       state = state.copyWith(
-        route:    route,
-        isSaving: false,
-        isActive: true,
+        route:         route,
+        isSaving:      false,
+        isActive:      true,
+        departureTime: DateTime.now(),
       );
 
       // STOMP 구독 시작 — 이후 서버 push로 currentSection 수신
@@ -472,8 +492,19 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
   }
 
   // ── 종료 ─────────────────────────────────────────────────
-  void stopRecoRoute() {
+  Future<void> stopRecoRoute() async {
     _stomp.unsubscribe(_queueLocationReco, subscriberKey: 'recoRoute');
+    // ✅ 추천 경로 종료 → POST /me/routines/active/complete/reco
+    final departure = state.departureTime;
+    final arrival   = DateTime.now();
+    if (departure != null) {
+      try {
+        await _repo.completeRecoRoute(departureTime: departure, arrivalTime: arrival);
+        debugPrint('[RecoRoute] completeRecoRoute 전송 성공');
+      } catch (e) {
+        debugPrint('[RecoRoute] completeRecoRoute 실패 (무시됨): $e');
+      }
+    }
     state = RecoRouteState(
       recoList:   state.recoList,
       detourList: state.detourList,
@@ -492,9 +523,12 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
     required bool hasIncident,
     required List<DetourModel> detourModelList,
   }) {
+    // ✅ [수정3] hasIncident는 한번 true가 되면 false로 덮어쓰지 않는다.
+    // (REST preloadList로 hasIncident=true가 세팅된 후 STOMP 초기 상태로 덮어씌워지는 버그 수정)
+    // detourList(REST 데이터)도 보존하고 STOMP detourModelList만 갱신한다.
     state = state.copyWith(
-      hasIncident: hasIncident,
-      incidentMessage: incidentMessage,
+      hasIncident: hasIncident || state.hasIncident,
+      incidentMessage: incidentMessage ?? state.incidentMessage,
       detourModelList: detourModelList,
     );
   }
@@ -632,19 +666,35 @@ class IncidentDetourNotifier extends StateNotifier<IncidentDetourState> {
   final StompService _stomp = StompService.instance;
 
   void _subscribeAll() {
-    // ── /user/queue/incident — 서버가 plain String으로 push ──────────────
-    // subscribe()는 JSON Map 파싱을 시도하므로 String body에 사용 불가.
+    // ── /user/queue/incident — 서버가 List<String>으로 push ──────────────
+    // subscribe()는 JSON Map 파싱을 시도하므로 Array body에 사용 불가.
     // subscribeRaw()만 등록 — 재연결 시 _rawSubscriptions 맵에서 자동 복구됨.
     _stomp.subscribeRaw(_queueIncident, (rawBody) {
       if (!mounted || rawBody == null) return;
-      // JSON string 형태 ("\"...\"") 또는 plain string 모두 처리
-      String msg = rawBody.trim();
-      if (msg.startsWith('"') && msg.endsWith('"')) {
-        msg = msg.substring(1, msg.length - 1);
-      }
-      if (msg.isNotEmpty) {
-        state = state.copyWith(incidentMessage: msg, hasIncident: true);
-        debugPrint('[Incident] 수신: $msg');
+      try {
+        // 서버가 List<String> 또는 List<Map> JSON 배열로 전송
+        // Map인 경우 'incident' 키의 값을 꺼냄
+        final decoded = jsonDecode(rawBody.trim());
+        final List<String> messages;
+        if (decoded is List) {
+          messages = decoded.map((e) {
+            if (e is Map) {
+              return (e['incident'] ?? e['message'] ?? e['description'] ?? '').toString();
+            }
+            return e.toString();
+          }).where((m) => m.isNotEmpty).toList();
+        } else if (decoded is String) {
+          messages = [decoded];
+        } else {
+          messages = [];
+        }
+        final combined = messages.where((m) => m.isNotEmpty).join('\n');
+        if (combined.isNotEmpty) {
+          state = state.copyWith(incidentMessage: combined, hasIncident: true);
+          debugPrint('[Incident] 수신 ${messages.length}건: $combined');
+        }
+      } catch (e) {
+        debugPrint('[Incident] 파싱 오류: $e / rawBody=$rawBody');
       }
     });
 

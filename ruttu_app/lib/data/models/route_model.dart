@@ -603,12 +603,14 @@ class DetourModel {
   final int pathId;
   final double totalDurationMin;
   final int transferCount;
+  final int cost;
   final List<DetourSegmentModel> pathSegments;
 
   const DetourModel({
     required this.pathId,
     required this.totalDurationMin,
     required this.transferCount,
+    this.cost = 0,
     required this.pathSegments,
   });
 
@@ -616,6 +618,7 @@ class DetourModel {
         pathId:           (json['path_id']           as num).toInt(),
         totalDurationMin: (json['total_duration_min'] as num).toDouble(),
         transferCount:    (json['transfer_count']     as num).toInt(),
+        cost:             (json['cost']               as num?)?.toInt() ?? 0,
         pathSegments:     (json['path_segments'] as List<dynamic>)
                               .map((e) => DetourSegmentModel.fromJson(
                                   e as Map<String, dynamic>))

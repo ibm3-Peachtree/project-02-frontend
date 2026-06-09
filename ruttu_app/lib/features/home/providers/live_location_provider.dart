@@ -10,6 +10,7 @@ import '../../../data/services/stomp_service.dart';
 import '../../auth/providers/network_provider.dart';
 import 'home_provider.dart';
 import 'home_state.dart';
+import 'live_route_provider.dart' show recoRouteProvider, myRouteProvider, RecoRouteState, MyRouteState;
 
 // ── 상수 ─────────────────────────────────────────────────────────────
 const double _arrivalRadiusMeters   = 80.0;
@@ -116,15 +117,14 @@ final liveLocationProvider = Provider<void>((ref) {
 
           final safeSpeed = position.speed < 0 ? 0.0 : position.speed;
 
-          // liveLocationProvider는 항상 /app/location/my 만 전송.
-          // /app/location/reco 전송은 recoLiveRouteProvider의 GPS 스트림이 단독 담당.
-          // (RecoLiveRouteScreen 진입 시 _startGps()가 활성화됨)
+          // ✅ 추천 경로 활성 중이면 /app/location/reco, 아니면 /app/location/my 전송
+          final isRecoActive = ref.read(recoRouteProvider).isActive;
           sendLocation(
             latitude:  position.latitude,
             longitude: position.longitude,
             speed:     safeSpeed,
             accuracy:  position.accuracy,
-            isReco:    false,
+            isReco:    isRecoActive,
           );
 
           // 출발지 이탈 감지 → active 전환
@@ -171,39 +171,20 @@ final liveLocationProvider = Provider<void>((ref) {
   }
 
   // ── homeProvider 상태 변화 감지 ─────────────────────────────────
+  // ── homeProvider: 출발/도착/임박 감지 ──────────────────────────────
   ref.listen<HomeState>(homeProvider, (prev, next) {
+    // 나의 경로 시작 (myRouteProvider.isActive로 별도 감지하므로 여기선 preActive→active 전환만 처리)
     if (prev?.status != HomeStatus.active && next.status == HomeStatus.active) {
-      // 추천 경로 안내 중이면 /app/location/my GPS 전송 불필요
-      // (recoLiveRouteProvider가 /app/location/reco를 전송함)
-      if (!next.isUsingRecoRoute) {
-        debugPrint('[LiveLocation] 경로 시작(나의 경로) → GPS + STOMP 켜기');
-        ensureStompConnected();
-        startGps();
-      } else {
-        debugPrint('[LiveLocation] 경로 시작(추천 경로) → my GPS 생략');
-      }
+      // recoRoute가 이미 active면 GPS는 reco 전송 중이므로 스킵하지 않고 그냥 시작
+      // (sendLocation 내부에서 isRecoActive를 실시간 판단함)
+      debugPrint('[LiveLocation] 경로 active 전환 → GPS 시작');
+      ensureStompConnected();
+      startGps();
     }
 
     if (prev?.status == HomeStatus.active && next.status != HomeStatus.active) {
       debugPrint('[LiveLocation] 경로 종료 → GPS 끄기');
       stopGps();
-    }
-
-    // 추천 경로로 전환 시 my GPS 중단
-    if (next.status == HomeStatus.active &&
-        prev?.isUsingRecoRoute == false &&
-        next.isUsingRecoRoute == true) {
-      debugPrint('[LiveLocation] 추천 경로 전환 → my GPS 중단');
-      stopGps();
-    }
-
-    // 추천 경로 안내 종료 후 나의 경로로 복귀 시 my GPS 재시작
-    if (next.status == HomeStatus.active &&
-        prev?.isUsingRecoRoute == true &&
-        next.isUsingRecoRoute == false) {
-      debugPrint('[LiveLocation] 나의 경로 복귀 → my GPS 재시작');
-      ensureStompConnected();
-      startGps();
     }
 
     if (next.status == HomeStatus.preActive &&
@@ -215,18 +196,55 @@ final liveLocationProvider = Provider<void>((ref) {
     }
   });
 
-  // 1분마다 active인데 GPS 꺼진 경우 재시작 (나의 경로일 때만)
+  // ── myRouteProvider: 나의 경로 시작/종료 감지 ───────────────────────
+  ref.listen<MyRouteState>(myRouteProvider, (prev, next) {
+    if (prev?.isActive != true && next.isActive == true) {
+      debugPrint('[LiveLocation] 나의 경로 시작 → GPS 켜기 (/app/location/my)');
+      ensureStompConnected();
+      startGps();
+    }
+    if (prev?.isActive == true && next.isActive != true) {
+      // recoRoute도 꺼진 경우에만 GPS 중단 (둘 다 비활성이면 전송 불필요)
+      if (!ref.read(recoRouteProvider).isActive) {
+        debugPrint('[LiveLocation] 나의 경로 종료 + reco 비활성 → GPS 끄기');
+        stopGps();
+      }
+    }
+  });
+
+  // ── recoRouteProvider: 추천 경로 시작/종료 감지 ─────────────────────
+  ref.listen<RecoRouteState>(recoRouteProvider, (prev, next) {
+    if (prev?.isActive != true && next.isActive == true) {
+      debugPrint('[LiveLocation] 추천 경로 시작 → GPS 켜기 (/app/location/reco)');
+      ensureStompConnected();
+      startGps();
+    }
+    if (prev?.isActive == true && next.isActive != true) {
+      // myRoute도 꺼진 경우에만 GPS 중단
+      if (!ref.read(myRouteProvider).isActive) {
+        debugPrint('[LiveLocation] 추천 경로 종료 + my 비활성 → GPS 끄기');
+        stopGps();
+      } else {
+        // myRoute가 아직 active면 계속 전송 (isReco=false로 전환됨)
+        debugPrint('[LiveLocation] 추천 경로 종료 → my 경로로 GPS 전환 유지');
+      }
+    }
+  });
+
+  // 1분마다 active인데 GPS 꺼진 경우 재시작
   scheduleTimer = Timer.periodic(const Duration(minutes: 1), (_) {
     final s = ref.read(homeProvider);
-    if (s.status == HomeStatus.active && !s.isUsingRecoRoute && sub == null) {
-      debugPrint('[LiveLocation] active(나의 경로)인데 GPS 꺼짐 → 재시작');
+    final myActive   = ref.read(myRouteProvider).isActive;
+    final recoActive = ref.read(recoRouteProvider).isActive;
+    if ((s.status == HomeStatus.active || myActive || recoActive) && sub == null) {
+      debugPrint('[LiveLocation] active인데 GPS 꺼짐 → 재시작');
       startGps();
     }
   });
 
-  // 앱 시작 시 이미 active(나의 경로) 또는 출발 임박이면 즉시 시작
+  // 앱 시작 시 이미 active 또는 출발 임박이면 즉시 시작
   final initial = ref.read(homeProvider);
-  if ((initial.status == HomeStatus.active && !initial.isUsingRecoRoute) ||
+  if (initial.status == HomeStatus.active ||
       (initial.status == HomeStatus.preActive && initial.isDepartureImminent)) {
     ensureStompConnected();
     startGps();
