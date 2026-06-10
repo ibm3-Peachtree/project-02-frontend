@@ -6,6 +6,7 @@ import '../../../data/models/route_model.dart';
 import '../../../data/repositories/home_repository.dart';
 import '../../../data/services/stomp_service.dart';
 import '../../auth/providers/network_provider.dart';
+import 'home_provider.dart' show homeProvider;
 
 
 // ── 탭 상태 ─────────────────────────────────────────────────────────
@@ -75,6 +76,9 @@ class MyRouteNotifier extends StateNotifier<MyRouteState> {
   final HomeRepository _repo;
   final StompService _stomp = StompService.instance;
 
+  /// STOMP section 수신 시 외부(homeProvider)에 알리는 콜백.
+  void Function(CurrentSectionModel)? onSectionUpdate;
+
   Future<void> loadMyRoute(int routineId) async {
     if (state.route != null || state.isRouteLoading) return;
     state = state.copyWith(isRouteLoading: true, clearError: true);
@@ -104,15 +108,16 @@ class MyRouteNotifier extends StateNotifier<MyRouteState> {
       try {
         final section = _parseCurrentSection(json);
         state = state.copyWith(currentSection: section);
+        onSectionUpdate?.call(section); // homeProvider 동기화
         debugPrint('[MyRoute] STOMP section 수신 idx=${section.idx}');
       } catch (e) {
         debugPrint('[MyRoute] section 파싱 오류: $e');
       }
-    });
+    }, subscriberKey: 'myRoute');
   }
 
   Future<void> stopMyRoute() async {
-    _stomp.unsubscribe(_queueLocationMy);
+    _stomp.unsubscribe(_queueLocationMy, subscriberKey: 'myRoute');
     // ✅ 나의 경로 종료 → POST /me/routines/active/complete/my
     final departure = state.departureTime;
     final arrival   = DateTime.now();
@@ -130,14 +135,22 @@ class MyRouteNotifier extends StateNotifier<MyRouteState> {
 
   @override
   void dispose() {
-    _stomp.unsubscribe(_queueLocationMy);
+    _stomp.unsubscribe(_queueLocationMy, subscriberKey: 'myRoute');
     super.dispose();
   }
 }
 
 final myRouteProvider =
     StateNotifierProvider<MyRouteNotifier, MyRouteState>(
-  (ref) => MyRouteNotifier(ref.read(homeRepositoryProvider)),
+  (ref) {
+    final notifier = MyRouteNotifier(ref.read(homeRepositoryProvider));
+    // STOMP section 수신 → homeProvider.routeCoordinates 동기화
+    // (지도 폴리라인·진행 상태 갱신)
+    notifier.onSectionUpdate = (section) {
+      try { ref.read(homeProvider.notifier).updateMySection(section); } catch (_) {}
+    };
+    return notifier;
+  },
 );
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -234,6 +247,9 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
 
   final HomeRepository _repo;
   final StompService _stomp = StompService.instance;
+
+  /// STOMP section 수신 시 외부(homeProvider)에 알리는 콜백.
+  void Function(CurrentSectionModel)? onSectionUpdate;
 
   // ── 목록 ─────────────────────────────────────────────────
 
@@ -482,6 +498,7 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
         try {
           final section = _parseCurrentSection(json);
           state = state.copyWith(currentSection: section);
+          onSectionUpdate?.call(section); // homeProvider 동기화
           debugPrint('[RecoRoute] STOMP section 수신 idx=${section.idx}');
         } catch (e) {
           debugPrint('[RecoRoute] section 파싱 오류: $e');
@@ -538,6 +555,11 @@ final recoRouteProvider =
     StateNotifierProvider<RecoRouteNotifier, RecoRouteState>(
   (ref) {
     final notifier = RecoRouteNotifier(ref.read(homeRepositoryProvider));
+    // STOMP section 수신 → homeProvider.recoRouteCoordinates 동기화
+    // (지도 폴리라인·진행 상태 갱신)
+    notifier.onSectionUpdate = (section) {
+      try { ref.read(homeProvider.notifier).updateRecoSection(section); } catch (_) {}
+    };
     // incidentDetourProvider 변화 → recoRouteProvider 상태 머지
     ref.listen<IncidentDetourState>(incidentDetourProvider, (prev, next) {
       // incident / detour 중 하나라도 변경되면 즉시 머지

@@ -126,13 +126,12 @@ class HomeState {
       if (statusStr == '대기중') return false; // 정류장 대기 중 → 탑승 준비 상태
     }
     // liveStatus 없으면 section 데이터로 폴백
+    // idx = 현재 위치 인덱스 (nearestIndex, 0-based) → section[idx]가 현재 구간
     final sec = currentSectionData;
     if (sec == null) return true;
-    // idx = 도착 예정 구간이므로, 현재 있는 구간은 idx - 1
-    final currentIdx = sec.idx - 1; // 현재 구간 (idx는 도착 예정)
     final raw = sec.section;
-    if (currentIdx < 0 || currentIdx >= raw.length) return true;
-    return raw[currentIdx] == 'walk';
+    if (sec.idx < 0 || sec.idx >= raw.length) return true;
+    return raw[sec.idx] == 'walk';
   }
 
   /// 현재 구간(버스/지하철) 내 남은 정거장 수.
@@ -174,17 +173,12 @@ class HomeState {
   String? get currentStationName {
     final sec = currentSectionData;
     if (sec == null) return null;
-    final idx = sec.idx;
+    final idx = sec.idx; // idx = 현재 위치 인덱스 (nearestIndex)
     if (sec.xy.isEmpty) return null;
     final raw = sec.section;
 
     if (isWalking) {
-      // 도보/대기 중: idx(도착 예정 구간)의 탑승 정거장 이름 반환
-      if (idx >= 0 && idx < raw.length && idx < sec.xy.length && raw[idx] != 'walk') {
-        final name = sec.xy[idx].stationName;
-        if (name != null && name.isNotEmpty) return name;
-      }
-      // idx 이후에서 탑승 정거장 탐색
+      // 도보 중: idx+1 이후 처음 non-walk 구간의 정거장(다음 탑승 위치) 반환
       for (var i = idx + 1; i < raw.length && i < sec.xy.length; i++) {
         if (raw[i] != 'walk') {
           final name = sec.xy[i].stationName;
@@ -194,10 +188,9 @@ class HomeState {
       return null;
     }
 
-    // 탑승 중: 현재 구간(idx - 1)의 정거장 이름
-    final currentIdx = idx - 1;
-    if (currentIdx < 0 || currentIdx >= sec.xy.length) return null;
-    return sec.xy[currentIdx].stationName;
+    // 탑승 중: 현재 위치(idx) 정거장 이름
+    if (idx < 0 || idx >= sec.xy.length) return null;
+    return sec.xy[idx].stationName;
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -213,10 +206,9 @@ class HomeState {
       if (statusStr == '대기중') return false;
     }
     if (sec == null) return true;
-    final currentIdx = sec.idx - 1;
     final raw = sec.section;
-    if (currentIdx < 0 || currentIdx >= raw.length) return true;
-    return raw[currentIdx] == 'walk';
+    if (sec.idx < 0 || sec.idx >= raw.length) return true;
+    return raw[sec.idx] == 'walk';
   }
 
   /// 나의 경로 탭 전용 isWalking (myCurrentSectionData 기준)
@@ -224,10 +216,9 @@ class HomeState {
     // 나의 경로 탭은 항상 section 데이터 기준으로 판단 (liveStatus는 활성 경로 기준)
     final sec = myCurrentSectionData;
     if (sec == null) return true;
-    final currentIdx = sec.idx - 1;
     final raw = sec.section;
-    if (currentIdx < 0 || currentIdx >= raw.length) return true;
-    return raw[currentIdx] == 'walk';
+    if (sec.idx < 0 || sec.idx >= raw.length) return true;
+    return raw[sec.idx] == 'walk';
   }
 
   /// 나의 경로 탭 전용 currentStationName
@@ -253,10 +244,9 @@ class HomeState {
     }
     final sec = recoCurrentSectionData;
     if (sec == null) return true;
-    final currentIdx = sec.idx - 1;
     final raw = sec.section;
-    if (currentIdx < 0 || currentIdx >= raw.length) return true;
-    return raw[currentIdx] == 'walk';
+    if (sec.idx < 0 || sec.idx >= raw.length) return true;
+    return raw[sec.idx] == 'walk';
   }
 
   /// 추천 경로 탭 전용 currentStationName
@@ -277,14 +267,11 @@ class HomeState {
 
   String? _stationNameForSection(CurrentSectionModel? sec, bool walking) {
     if (sec == null) return null;
-    final idx = sec.idx;
+    final idx = sec.idx; // idx = 현재 위치 인덱스 (nearestIndex)
     if (sec.xy.isEmpty) return null;
     final raw = sec.section;
     if (walking) {
-      if (idx >= 0 && idx < raw.length && idx < sec.xy.length && raw[idx] != 'walk') {
-        final name = sec.xy[idx].stationName;
-        if (name != null && name.isNotEmpty) return name;
-      }
+      // 도보 중: 다음 탑승 정거장(idx+1 이후 non-walk 구간) 이름 반환
       for (var i = idx + 1; i < raw.length && i < sec.xy.length; i++) {
         if (raw[i] != 'walk') {
           final name = sec.xy[i].stationName;
@@ -293,9 +280,9 @@ class HomeState {
       }
       return null;
     }
-    final currentIdx = idx - 1;
-    if (currentIdx < 0 || currentIdx >= sec.xy.length) return null;
-    return sec.xy[currentIdx].stationName;
+    // 탑승 중: 현재 위치(idx) 정거장 이름
+    if (idx < 0 || idx >= sec.xy.length) return null;
+    return sec.xy[idx].stationName;
   }
 
   int? _stopsRemainingForRoute(

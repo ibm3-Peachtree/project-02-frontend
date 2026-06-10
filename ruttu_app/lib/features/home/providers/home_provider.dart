@@ -667,17 +667,14 @@ class HomeNotifier extends StateNotifier<HomeState> {
     if (pathLength == 0) return 0;
 
     final raw = section.section;
-    final currentRawIdx = (section.idx - 1).clamp(0, raw.length - 1);
+    // idx = nearestIndex (현재 위치, 0-based) → section[idx]가 현재 구간
+    final currentRawIdx = section.idx.clamp(0, raw.length - 1);
 
     if (raw.isEmpty) return currentRawIdx.clamp(0, pathLength - 1);
 
-    final compressed = <String>[];
-    for (final type in raw) {
-      if (compressed.isEmpty || compressed.last != type) {
-        compressed.add(type);
-      }
-    }
-
+    // raw section 배열을 연속 중복 제거(압축)하여 PathModel 인덱스에 매핑
+    // 예: ['walk','walk','bus:5535','bus:5535','walk'] → ['walk','bus:5535','walk']
+    //     rawIdx=2(bus) → compressedIdx=1
     String? prevType;
     int compressedIdx = 0;
     for (var i = 0; i <= currentRawIdx && i < raw.length; i++) {
@@ -688,8 +685,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
       }
     }
 
-    debugPrint('[resolvePathIndex] raw=${raw.length}개 → compressed=${compressed.length}개 '
-        'rawIdx=$currentRawIdx (idx=${section.idx}-1) → pathIdx=$compressedIdx (pathLength=$pathLength)');
+    debugPrint('[resolvePathIndex] raw=${raw.length}개 → rawIdx=$currentRawIdx (idx=${section.idx}) '
+        '→ pathIdx=$compressedIdx (pathLength=$pathLength)');
 
     return compressedIdx.clamp(0, pathLength - 1);
   }
@@ -818,8 +815,39 @@ class HomeNotifier extends StateNotifier<HomeState> {
     }
   }
 
+  /// 나의 경로 안내 시작 직후, STOMP section이 아직 도착하기 전에
+  /// routeXy 좌표로 지도 폴리라인을 미리 채워둔다.
+  void seedMyRouteCoordinates(List<RouteXYModel> coords) {
+    if (state.routeCoordinates.isNotEmpty) return; // 이미 있으면 덮어쓰지 않음
+    state = state.copyWith(routeCoordinates: coords);
+    debugPrint('[HomeNotifier] seedMyRouteCoordinates ${coords.length}개');
+  }
+
+  /// myRouteProvider STOMP /queue/location/my 수신 → homeProvider 동기화
+  /// homeProvider.status が active でなくても（myRouteProvider 単独起動）動作するよう
+  /// status チェックを isUsingRecoRoute のみに絞る。
+  void updateMySection(CurrentSectionModel section) {
+    // 추천 경로 안내 중에는 나의 경로 section으로 지도를 덮어쓰지 않는다
+    if (state.isUsingRecoRoute) return;
+    final route = state.myRoute;
+    final stepIndex = route != null
+        ? _resolvePathIndex(section, route.path.length)
+        : state.myStepIndex;
+    final newCoords = section.xy.isNotEmpty ? section.xy : state.routeCoordinates;
+    state = state.copyWith(
+      routeCoordinates:     newCoords,
+      myCurrentSectionData: section,
+      currentStepIndex:     stepIndex,
+      myStepIndex:          stepIndex,
+      stepRemainingMinutes: route != null
+          ? _remainingMinutes(route, stepIndex)
+          : state.stepRemainingMinutes,
+    );
+    debugPrint('[HomeNotifier] updateMySection idx=${section.idx} '
+        'coords=${newCoords.length}개 stepIdx=$stepIndex');
+  }
+
   void updateRecoSection(CurrentSectionModel section) {
-    if (state.status != HomeStatus.active) return;
     final recoStepIdx = state.recommendedRoute != null
         ? _resolvePathIndex(section, state.recommendedRoute!.path.length)
         : state.recoStepIndex;
@@ -897,8 +925,29 @@ class HomeNotifier extends StateNotifier<HomeState> {
     _startPolling();
   }
 
+  /// 우회 경로 선택 후 "이 경로로 변경" 시 호출.
+  /// saveAndStartDetourRoute()가 API 저장+상세 fetch를 담당하므로
+  /// 여기서는 homeProvider 상태(isUsingRecoRoute, status) 전환만 수행.
+  /// recommendedRoute는 saveAndStartDetourRoute 완료 후 recoRouteProvider.route에서
+  /// 별도로 채워지므로, 임시로 기존 recommendedRoute를 유지한다.
+  Future<void> switchToDetourRoute(int pathId) async {
+    // 나의 경로 STOMP 구독 해제
+    _unsubscribeLocationMy();
+
+    state = state.copyWith(
+      isUsingRecoRoute: true,
+      departureTime:    state.departureTime ?? DateTime.now(),
+    );
+
+    // active 전환
+    if (state.status != HomeStatus.active) {
+      state = state.copyWith(status: HomeStatus.active);
+    }
+    _startPolling();
+  }
   @override
-  void dispose() {
+void dispose() {
+  
     _liveTimer?.cancel();
     _departureTimer?.cancel();
     _autoStartTimer?.cancel();

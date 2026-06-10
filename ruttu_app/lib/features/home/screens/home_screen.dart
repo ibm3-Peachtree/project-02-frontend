@@ -83,6 +83,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               if (!mounted) return;
               final departure = ref.read(homeProvider).departureTime ?? DateTime.now();
               final arrival = DateTime.now();
+              // ✅ recoRoute / myRoute isActive 초기화 (안내중 상태 해제)
+              if (ref.read(recoRouteProvider).isActive) {
+                await ref.read(recoRouteProvider.notifier).stopRecoRoute();
+              }
+              if (ref.read(myRouteProvider).isActive) {
+                await ref.read(myRouteProvider.notifier).stopMyRoute();
+              }
               ref.read(homeProvider.notifier).stopRoute();
               await Future.delayed(const Duration(milliseconds: 400));
               if (mounted) _showFeedbackModal(context, routine, departure, arrival);
@@ -2000,45 +2007,6 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
               }
             },
           ),
-          // 줌 컨트롤 버튼
-          Builder(
-            builder: (context) {
-              final screenH = MediaQuery.of(context).size.height;
-              final minPanelH = screenH * 0.35 + 16;
-              return Positioned(
-                right: 12,
-                bottom: minPanelH,
-                child: Column(
-                  children: [
-                    _MapZoomButton(
-                      icon: Icons.add,
-                      onTap: () async {
-                        if (_mapController == null) return;
-                        await _mapController!.updateCamera(NCameraUpdate.zoomIn());
-                      },
-                    ),
-                    const SizedBox(height: 6),
-                    _MapZoomButton(
-                      icon: Icons.remove,
-                      onTap: () async {
-                        if (_mapController == null) return;
-                        await _mapController!.updateCamera(NCameraUpdate.zoomOut());
-                      },
-                    ),
-                    const SizedBox(height: 6),
-                    _MapZoomButton(
-                      icon: Icons.my_location,
-                      onTap: () {
-                        if (_mapController != null) {
-                          _moveToCurrentLocation(_mapController!);
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
           // ── 줌 컨트롤 버튼 (active 지도) ──────────────────────────────
           Builder(
             builder: (context) {
@@ -2109,11 +2077,6 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  // ✅ [수정1] 새로고침 버튼
-                  _RefreshButton(
-                    onTap: () => ref.read(homeProvider.notifier).refresh(),
                   ),
                 ],
               ),
@@ -2227,9 +2190,10 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
   @override
   void initState() {
     super.initState();
-    // isUsingRecoRoute가 이미 true인 상태로 진입하면 탭 1로 시작
-    final initialIndex = ref.read(homeProvider).isUsingRecoRoute ? 1 : 0;
-    _tabController = TabController(length: 2, vsync: this, initialIndex: initialIndex);
+    // 항상 나의 경로 탭(탭0)으로 시작.
+    // isUsingRecoRoute=true인 경우에도 탭0의 _ActivePanel이
+    // isUsingReco 플래그를 보고 recommendedRoute 데이터를 표시하므로 탭0이 올바름.
+    _tabController = TabController(length: 2, vsync: this, initialIndex: 0);
     _startGpsStream();
   }
 
@@ -2252,7 +2216,9 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
   Future<void> _updateGpsMarkerOnly(NaverMapController controller, Position pos) async {
     try {
       // 경로가 아직 안 그려진 경우 전체 재드로우 (GPS 이벤트가 onMapReady보다 늦을 수 있음)
+      // _routeDrawn=false 동안 재진입을 막기 위해 먼저 true로 세팅 후 드로우
       if (!_routeDrawn) {
+        _routeDrawn = true; // 재진입 방지 플래그 먼저 세팅
         final home = ref.read(homeProvider);
         final activeCoords = home.isUsingRecoRoute
             ? home.recoRouteCoordinates
@@ -2313,11 +2279,12 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     List<RouteXYModel> coords,
   ) async {
     await controller.clearOverlays();
-    _routeDrawn = false;
+    // _routeDrawn을 false로 먼저 세팅하면 GPS 콜백이 즉시 재진입해
+    // 무한 루프가 생기므로, 그리기 완료 후에만 true로 세팅한다.
 
     final section = ref.read(homeProvider).currentSectionData;
-    // idx = 도착 예정 구간 인덱스 (현재 이동 중 구간 = idx - 1)
-    final currentIdx = section != null ? (section.idx - 1).clamp(0, coords.length - 1) : -1;
+    // idx = nearestIndex (현재 위치, 0-based) → idx까지 지나온 구간, idx+1부터 미도달
+    final currentIdx = section != null ? section.idx.clamp(0, coords.length - 1) : -1;
 
     // ── 1. 좌표 포인트 수집 ─────────────────────────────────
     final allPoints = <({NLatLng pt, String type, int xyIdx})>[];
@@ -2440,12 +2407,14 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
   Widget build(BuildContext context) {
     final home = ref.watch(homeProvider);
 
-    // 추천 경로로 전환되는 순간 탭을 1로 자동 이동 (State가 살아있으므로 안전)
+    // 추천 경로로 전환되는 순간 탭을 0(나의 경로 탭)으로 이동
+    // → _MyRouteTab 빌드 내에서 recoRouteProvider.isActive=true이면
+    //   RecoLiveRouteScreen을 인라인으로 표시하는 로직이 이미 구현되어 있음
     ref.listen<bool>(
       homeProvider.select((s) => s.isUsingRecoRoute),
       (prev, next) {
         if (next && prev == false) {
-          _tabController.animateTo(1);
+          _tabController.animateTo(0);
         }
       },
     );
@@ -2473,6 +2442,7 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
       final stepChanged = prev?.currentStepIndex != next.currentStepIndex;
       final sectionChanged = prev?.currentSectionData?.idx != next.currentSectionData?.idx;
       if (coordsChanged || stepChanged || sectionChanged) {
+        _routeDrawn = false; // 좌표/구간 변경 시 재드로우 플래그 리셋
         _drawRouteOnMap(_mapController!, activeCoords);
       }
     });
@@ -2481,7 +2451,10 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     final route = home.myRoute;
     // 현재 활성 탭에 맞는 경로 및 좌표
     final isUsingReco = home.isUsingRecoRoute;
-    final activeRoute = isUsingReco ? home.recommendedRoute : home.myRoute;
+    // home.recommendedRoute가 아직 null(전환 직후)이면 recoRouteProvider.route로 fallback
+    final recoRoute = home.recommendedRoute
+        ?? ref.watch(recoRouteProvider.select((s) => s.route));
+    final activeRoute = isUsingReco ? recoRoute : home.myRoute;
     // routeCoordinates가 비어있으면 routineDetail.routeXy로 fallback
     final activeCoords = isUsingReco
         ? home.recoRouteCoordinates
@@ -2619,15 +2592,29 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                           controller: scrollController,
                           child: _ActivePanel(
                             routine: routine,
-                            route: route,
-                            currentStepIndex: home.myStepIndex,
+                            route: isUsingReco
+                                ? recoRoute
+                                : route,
+                            currentStepIndex: isUsingReco
+                                ? home.recoStepIndex
+                                : home.myStepIndex,
                             liveStatusText:
                                 ref.watch(liveStatusProvider)?.status ?? '대기중',
-                            stepRemainingMinutes: home.myStepRemainingMinutes,
-                            stopsRemaining: home.myStopsRemaining,
-                            currentStationName: home.myCurrentStationName,
-                            isWalking: home.myIsWalking,
-                            sectionData: home.myCurrentSectionData,
+                            stepRemainingMinutes: isUsingReco
+                                ? home.recoStepRemainingMinutes
+                                : home.myStepRemainingMinutes,
+                            stopsRemaining: isUsingReco
+                                ? home.recoStopsRemaining
+                                : home.myStopsRemaining,
+                            currentStationName: isUsingReco
+                                ? home.recoCurrentStationName
+                                : home.myCurrentStationName,
+                            isWalking: isUsingReco
+                                ? home.recoIsWalking
+                                : home.myIsWalking,
+                            sectionData: isUsingReco
+                                ? home.recoCurrentSectionData
+                                : home.myCurrentSectionData,
                             onStop: () =>
                                 widget.onStopTap(home.activeRoutine),
                           ),
@@ -2639,7 +2626,9 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                           scrollController: scrollController,
                           // "현재 경로 유지" 버튼: Navigator.pop() 대신 탭 전환
                           onKeep: () => _tabController.animateTo(0),
-                          // "이 경로로 변경" 완료 후 나의 경로 탭으로 전환
+                          // "이 경로로 변경" 완료 후: 나의 경로 탭(탭0)으로 이동
+                          // → _MyRouteTab이 recoRouteProvider.isActive=true를 감지해
+                          //   RecoLiveRouteScreen을 인라인으로 표시 (이미지4 레이아웃)
                           onRouteStarted: () => _tabController.animateTo(0),
                         ),
                       ],

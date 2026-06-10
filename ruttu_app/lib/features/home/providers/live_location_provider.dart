@@ -153,6 +153,13 @@ final liveLocationProvider = Provider<void>((ref) {
               );
               if (dist <= _arrivalRadiusMeters) {
                 debugPrint('[LiveLocation] 목적지 도달 ${dist.toStringAsFixed(0)}m → 자동 종료');
+                // ✅ recoRoute / myRoute isActive 초기화 (안내중 상태 해제)
+                if (ref.read(recoRouteProvider).isActive) {
+                  ref.read(recoRouteProvider.notifier).stopRecoRoute();
+                }
+                if (ref.read(myRouteProvider).isActive) {
+                  ref.read(myRouteProvider.notifier).stopMyRoute();
+                }
                 ref.read(homeProvider.notifier).arriveByGps();
                 stopGps();
               }
