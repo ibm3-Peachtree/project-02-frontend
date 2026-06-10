@@ -87,7 +87,22 @@ class MyRouteNotifier extends StateNotifier<MyRouteState> {
     if (state.route != null || state.isRouteLoading) return;
     state = state.copyWith(isRouteLoading: true, clearError: true);
     try {
-      final route = await _repo.getMyRoute(routineId);
+      final route = await _repo.getMyRouteDefault();
+      state = state.copyWith(route: route, isRouteLoading: false);
+    } catch (e) {
+      state = state.copyWith(
+        isRouteLoading: false,
+        error: '경로를 불러오지 못했어요. 다시 시도해 주세요.',
+      );
+    }
+  }
+
+  /// 강제 새로고침 — route가 이미 있어도 API를 다시 호출한다.
+  Future<void> refreshMyRoute(int routineId) async {
+    if (state.isRouteLoading) return;
+    state = state.copyWith(isRouteLoading: true, clearError: true);
+    try {
+      final route = await _repo.getMyRouteDefault();
       state = state.copyWith(route: route, isRouteLoading: false);
     } catch (e) {
       state = state.copyWith(
@@ -306,7 +321,7 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
 
     state = state.copyWith(isRouteLoading: true, clearError: true);
     try {
-      final resp = await _repo.getRecoRouteListResponse(routineId);
+      final resp = await _repo.getRecoRouteListResponseDefault();
       state = state.copyWith(
         recoList:        resp.recoList,
         detourList:      resp.detourList,

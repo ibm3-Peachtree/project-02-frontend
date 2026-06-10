@@ -208,17 +208,30 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
     // 시작 전: 경로 미리보기 + 시작 버튼
     // ✅ [버그 수정] myRouteProvider.route가 null이면 homeProvider.myRoute로 fallback
     final previewRoute = state.route ?? ref.watch(homeProvider.select((s) => s.myRoute));
-    return _StartPrompt(
-      route: previewRoute,
-      isSectionLoading: state.isSectionLoading,
-      description: '나의 경로를 따라 실시간으로 안내받으세요.',
-      buttonLabel: '경로 안내 시작',
-      onStart: () async {
-        // ✅ [버그 수정] homeProvider.startRoute()를 통해 status=active 전환,
-        // STOMP 구독, 폴리라인 초기화를 한번에 처리.
-        // myRouteProvider.startMyRoute()는 homeProvider.startRoute() 내에서 호출됨.
-        await ref.read(homeProvider.notifier).startRoute();
-      },
+    return Column(
+      children: [
+        _MyRouteRefreshBar(
+          isLoading: state.isRouteLoading,
+          onRefresh: () {
+            final routineId =
+                ref.read(homeProvider).activeRoutine?.routineId ?? 0;
+            if (routineId != 0) {
+              ref.read(myRouteProvider.notifier).refreshMyRoute(routineId);
+            }
+          },
+        ),
+        Expanded(
+          child: _StartPrompt(
+            route: previewRoute,
+            isSectionLoading: state.isSectionLoading,
+            description: '나의 경로를 따라 실시간으로 안내받으세요.',
+            buttonLabel: '경로 안내 시작',
+            onStart: () async {
+              await ref.read(homeProvider.notifier).startRoute();
+            },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -753,6 +766,62 @@ class _RecoRefreshBar extends StatelessWidget {
           color: const Color(0xFFF4F6FA),
           border: Border(
             bottom: BorderSide(color: const Color(0xFFE5E9F0), width: 1),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (isLoading)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.8,
+                  color: AppColors.primary,
+                ),
+              )
+            else
+              const Icon(Icons.refresh_rounded, size: 15, color: AppColors.primary),
+            const SizedBox(width: 6),
+            Text(
+              isLoading ? '불러오는 중...' : '경로 새로고침',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: isLoading ? AppColors.textSecondary : AppColors.primary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 나의 경로 탭 — 풀-width 새로고침 바
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class _MyRouteRefreshBar extends StatelessWidget {
+  const _MyRouteRefreshBar({
+    required this.isLoading,
+    required this.onRefresh,
+  });
+
+  final bool isLoading;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: isLoading ? null : onRefresh,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: const BoxDecoration(
+          color: Color(0xFFF4F6FA),
+          border: Border(
+            bottom: BorderSide(color: Color(0xFFE5E9F0), width: 1),
           ),
         ),
         child: Row(

@@ -14,17 +14,23 @@ abstract class HomeRepository {
   // 이 아래 메서드들은 REST API 호출로 초기 1회 fetch 또는 저장 용도로만 사용.
   // 실시간 STREAM 수신은 StompService를 직접 구독하는 Provider에서 처리한다.
 
-  /// REST GET /me/routines/active/route/{routineId} — 나의 경로 정보 (초기 1회 fetch)
+  /// REST GET /me/routines/active/routines — 나의 경로 정보 (탭 랜딩 시, routineId 없음)
+  Future<LiveRouteModel> getMyRouteDefault();
+
+  /// REST GET /me/routines/active/routines/{routineId} — 나의 경로 정보 (지금 출발하기)
   Future<LiveRouteModel> getMyRoute(int routineId);
 
-  /// REST GET /me/routines/active/reco/{routineId} — 추천 경로 정보 (초기 1회 fetch)
+  /// REST GET /me/routines/active/reco              — 추천 경로 목록 (탭 랜딩 시)
+  Future<LiveRouteModel> getRecommendedRouteDefault();
+
+  /// REST GET /me/routines/active/reco/{routineId} — 추천 경로 목록 (지금 출발하기 / 경로 전환)
   Future<LiveRouteModel> getRecommendedRoute(int routineId);
 
-  /// REST GET /me/routines/active/reco/{routineId} — 추천 경로 목록 (RouteListDto[])
-  Future<List<RouteModel>> getRecoRouteList(int routineId);
-
-  /// REST GET /me/routines/active/reco/{routineId} — 추천 경로 목록 + 돌발/우회 래퍼
+  /// REST GET /me/routines/active/reco              — 추천 경로 목록 + 돌발/우회 래퍼 (탭 랜딩 시)
   /// ※ 실시간 사고/우회 경로는 STOMP /user/queue/incident·detour 로 수신
+  Future<RecoRouteListResponse> getRecoRouteListResponseDefault();
+
+  /// REST GET /me/routines/active/reco/{routineId} — 추천 경로 목록 + 돌발/우회 래퍼 (지금 출발하기)
   Future<RecoRouteListResponse> getRecoRouteListResponse(int routineId);
 
   /// REST POST /me/routines/active/reco/{recoId} — 추천 경로 선택 저장
@@ -128,26 +134,29 @@ class ApiHomeRepository implements HomeRepository {
   // ── REST: 나의 경로 초기 fetch ────────────────────────────────────────
   // 실시간 갱신: STOMP /user/queue/location/my (MyRouteNotifier 구독)
   @override
+  Future<LiveRouteModel> getMyRouteDefault() async {
+    final response = await _dio.get(ApiConstants.liveMyRouteDefault);
+    return LiveRouteModel.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  @override
   Future<LiveRouteModel> getMyRoute(int routineId) async {
-    final response = await _dio.get(ApiConstants.liveMyRoute(routineId));
+    final response = await _dio.get(ApiConstants.liveMyRouteById(routineId));
     return LiveRouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
   // ── REST: 추천 경로 초기 fetch ────────────────────────────────────────
   // 실시간 갱신: STOMP /user/queue/location/reco (RecoRouteNotifier 구독)
   @override
-  Future<LiveRouteModel> getRecommendedRoute(int routineId) async {
-    final response = await _dio.get(ApiConstants.liveRecoRouteList(routineId));
+  Future<LiveRouteModel> getRecommendedRouteDefault() async {
+    final response = await _dio.get(ApiConstants.liveRecoRouteListDefault);
     return LiveRouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
   @override
-  Future<List<RouteModel>> getRecoRouteList(int routineId) async {
-    final response = await _dio.get(ApiConstants.liveRecoRouteList(routineId));
-    final list = response.data as List<dynamic>;
-    return list
-        .map((e) => RouteModel.fromJson(e as Map<String, dynamic>))
-        .toList();
+  Future<LiveRouteModel> getRecommendedRoute(int routineId) async {
+    final response = await _dio.get(ApiConstants.liveRecoRouteListById(routineId));
+    return LiveRouteModel.fromJson(response.data as Map<String, dynamic>);
   }
 
   // ── REST: 추천 경로 목록 초기 fetch ─────────────────────────────────
@@ -155,8 +164,14 @@ class ApiHomeRepository implements HomeRepository {
   //   STOMP /user/queue/incident  (IncidentDetourNotifier.subscribeRaw)
   //   STOMP /user/queue/detour    (IncidentDetourNotifier.subscribeRaw)
   @override
+  Future<RecoRouteListResponse> getRecoRouteListResponseDefault() async {
+    final response = await _dio.get(ApiConstants.liveRecoRouteListDefault);
+    return RecoRouteListResponse.fromJson(response.data);
+  }
+
+  @override
   Future<RecoRouteListResponse> getRecoRouteListResponse(int routineId) async {
-    final response = await _dio.get(ApiConstants.liveRecoRouteList(routineId));
+    final response = await _dio.get(ApiConstants.liveRecoRouteListById(routineId));
     return RecoRouteListResponse.fromJson(response.data);
   }
 

@@ -43,10 +43,14 @@ class ApiConstants {
 
   // ── 6. Live Routine ──────────────────────────────────────
   static const liveStatus              = '/me/routines/active/status';
-  // GET /me/routines/active/route/{routineId}
-  static String liveMyRoute(int routineId) => '/me/routines/active/route/$routineId';
-  // GET /me/routines/active/reco/{routineId}
-  static String liveRecoRouteList(int routineId) => '/me/routines/active/reco/$routineId';
+  // GET /me/routines/active/routines         — 탭 랜딩 시 (평소)
+  static const liveMyRouteDefault = '/me/routines/active/routines';
+  // GET /me/routines/active/routines/{routineId} — 지금 출발하기
+  static String liveMyRouteById(int routineId) => '/me/routines/active/routines/$routineId';
+  // GET /me/routines/active/reco              — 탭 랜딩 시 (평소)
+  static const liveRecoRouteListDefault = '/me/routines/active/reco';
+  // GET /me/routines/active/reco/{routineId} — 지금 출발하기 / 경로 전환
+  static String liveRecoRouteListById(int routineId) => '/me/routines/active/reco/$routineId';
   // POST /me/routines/active/reco/detail/{recoId}
   static String liveRecoSave(int recoId) => '/me/routines/active/reco/detail/$recoId';
   // GET /me/routines/active/reco/detail/{recoId} — 추천 경로 상세

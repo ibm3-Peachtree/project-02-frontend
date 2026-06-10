@@ -81,7 +81,7 @@ class HomeNotifier extends StateNotifier<HomeState> {
 
       LiveRouteModel? recommendedRoute;
       try {
-        recommendedRoute = await _repository.getRecommendedRoute(routineDetail.routineId);
+        recommendedRoute = await _repository.getRecommendedRouteDefault();
       } catch (e) {
         debugPrint('[initialize] getRecommendedRoute 실패, null 유지: $e');
       }
@@ -91,7 +91,7 @@ class HomeNotifier extends StateNotifier<HomeState> {
       bool hasIncident     = false;
       String? incidentMessage;
       try {
-        final recoResp  = await _repository.getRecoRouteListResponse(routineDetail.routineId);
+        final recoResp  = await _repository.getRecoRouteListResponseDefault();
         recoRouteList    = recoResp.recoList;
         detourRouteList  = recoResp.detourList;
         hasIncident      = recoResp.hasIncident;
