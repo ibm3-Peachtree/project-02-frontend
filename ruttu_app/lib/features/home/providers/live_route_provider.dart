@@ -80,6 +80,9 @@ class MyRouteNotifier extends StateNotifier<MyRouteState> {
   /// STOMP section 수신 시 외부(homeProvider)에 알리는 콜백.
   void Function(CurrentSectionModel)? onSectionUpdate;
 
+  /// myRoute isActive=true 전환 시 homeProvider에 알리는 콜백.
+  VoidCallback? onActivated;
+
   Future<void> loadMyRoute(int routineId) async {
     if (state.route != null || state.isRouteLoading) return;
     state = state.copyWith(isRouteLoading: true, clearError: true);
@@ -100,6 +103,8 @@ class MyRouteNotifier extends StateNotifier<MyRouteState> {
     // 구독 등록 후 서버가 push하면 currentSection이 채워진다.
     state = state.copyWith(isActive: true, clearError: true, departureTime: DateTime.now());
     _subscribeLocationMy();
+    // ✅ [버그 수정] isActive=true 전환 시 homeProvider.status도 active로 보장
+    onActivated?.call();
   }
 
   // ── STOMP /user/queue/location/my 구독 ─────────────────────────
@@ -149,6 +154,18 @@ final myRouteProvider =
     // (지도 폴리라인·진행 상태 갱신)
     notifier.onSectionUpdate = (section) {
       try { ref.read(homeProvider.notifier).updateMySection(section); } catch (_) {}
+    };
+    // ✅ [버그 수정] myRoute isActive=true 시 homeProvider.status를 active로 보장.
+    // live_route_tabs의 onStart가 homeProvider.startRoute()를 직접 호출하므로
+    // 이 콜백은 STOMP 단독 경로(startMyRoute 직접 호출)의 fallback으로 사용됨.
+    notifier.onActivated = () {
+      try {
+        final homeState = ref.read(homeProvider);
+        if (homeState.status != HomeStatus.active) {
+          ref.read(homeProvider.notifier).ensureActive(isReco: false);
+          debugPrint('[myRouteProvider] onActivated: homeProvider.status → active 강제 전환');
+        }
+      } catch (_) {}
     };
     return notifier;
   },
@@ -390,7 +407,11 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
   Future<void> saveAndStartDetourRoute(int pathId) async {
     if (state.isActive || state.isSaving) return;
 
-    state = state.copyWith(isSaving: true, clearError: true);
+    state = state.copyWith(
+      isSaving: true,
+      clearError: true,
+      clearSelectedRecoId: true, // ✅ 이전 추천 경로 선택 초기화 (혼합 방지)
+    );
     try {
       await _repo.saveDetourRoute(pathId);
 
@@ -463,7 +484,11 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
   Future<void> saveAndStartRecoRoute(int recoId) async {
     if (state.isActive || state.isSaving) return;
 
-    state = state.copyWith(isSaving: true, clearError: true);
+    state = state.copyWith(
+      isSaving: true,
+      clearError: true,
+      clearSelectedDetourPathId: true, // ✅ 이전 우회 경로 선택 초기화 (혼합 방지)
+    );
     try {
       // ※ homeProvider.switchToRecommendedRoute() 에서 이미 saveRecoRoute를 호출했으므로
       // 여기서는 상세 조회 + 활성화만 수행
@@ -532,8 +557,11 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
       }
     }
     state = RecoRouteState(
-      recoList:   state.recoList,
-      detourList: state.detourList,
+      recoList:        state.recoList,
+      detourList:      state.detourList,
+      detourModelList: state.detourModelList, // STOMP push 우회 목록 유지
+      hasIncident:     state.hasIncident,
+      incidentMessage: state.incidentMessage,
     );
   }
 
@@ -594,6 +622,23 @@ final recoRouteProvider =
           detourModelList: next.detourList,
         );
       }
+    });
+
+    // ✅ [버그수정4] ref.listen은 이후 변경만 감지하므로, 생성 시점에 이미
+    // incidentDetourProvider에 데이터가 있으면 놓침.
+    // Future.microtask로 현재 프레임 완료 후 즉시 현재 상태를 읽어 머지.
+    // (provider 레이어에서는 WidgetsBinding 사용 불가 → microtask 사용)
+    Future.microtask(() {
+      try {
+        final currentIncident = ref.read(incidentDetourProvider);
+        if (currentIncident.hasIncident || currentIncident.detourList.isNotEmpty) {
+          notifier.applyIncidentDetour(
+            incidentMessage: currentIncident.incidentMessage,
+            hasIncident: currentIncident.hasIncident,
+            detourModelList: currentIncident.detourList,
+          );
+        }
+      } catch (_) {}
     });
     return notifier;
   },

@@ -84,9 +84,31 @@ class _LiveRouteTabsState extends ConsumerState<LiveRouteTabs>
 // 나의 경로 탭
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-class _MyRouteTab extends ConsumerWidget {
+class _MyRouteTab extends ConsumerStatefulWidget {
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_MyRouteTab> createState() => _MyRouteTabState();
+}
+
+class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _tryLoadRoute());
+  }
+
+  void _tryLoadRoute() {
+    if (!mounted) return;
+    final myState = ref.read(myRouteProvider);
+    if (myState.route == null && !myState.isRouteLoading && !myState.isActive) {
+      final routineId = ref.read(homeProvider).activeRoutine?.routineId ?? 0;
+      if (routineId != 0) {
+        ref.read(myRouteProvider.notifier).loadMyRoute(routineId);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(myRouteProvider);
     final recoState = ref.watch(recoRouteProvider);
 
@@ -106,6 +128,7 @@ class _MyRouteTab extends ConsumerWidget {
                     currentSection: recoState.currentSection,
                     onStop: () =>
                         ref.read(recoRouteProvider.notifier).stopRecoRoute(),
+                    liveStatusText: ref.watch(liveStatusProvider)?.status,
                   )
                 : const Center(
                     child: Padding(
@@ -141,7 +164,12 @@ class _MyRouteTab extends ConsumerWidget {
 
     // 안내 중: 구간 상세 표시
     if (state.isActive) {
-      if (state.route == null) {
+      // ✅ [버그 수정] myRouteProvider.route가 null이면 homeProvider.myRoute로 fallback
+      final activeRoute = state.route ?? ref.watch(homeProvider.select((s) => s.myRoute));
+      // ✅ [버그 수정] currentSection도 homeProvider.myCurrentSectionData로 fallback
+      final activeSection = state.currentSection
+          ?? ref.watch(homeProvider.select((s) => s.myCurrentSectionData));
+      if (activeRoute == null) {
         return const Center(child: CircularProgressIndicator());
       }
       return Column(
@@ -150,9 +178,10 @@ class _MyRouteTab extends ConsumerWidget {
           _ActiveNavigationBanner(isReco: false),
           Expanded(
             child: _RouteDetail(
-              route: state.route!,
-              currentSection: state.currentSection,
+              route: activeRoute,
+              currentSection: activeSection,
               onStop: () => ref.read(myRouteProvider.notifier).stopMyRoute(),
+              liveStatusText: ref.watch(liveStatusProvider)?.status,
             ),
           ),
         ],
@@ -177,18 +206,18 @@ class _MyRouteTab extends ConsumerWidget {
     }
 
     // 시작 전: 경로 미리보기 + 시작 버튼
+    // ✅ [버그 수정] myRouteProvider.route가 null이면 homeProvider.myRoute로 fallback
+    final previewRoute = state.route ?? ref.watch(homeProvider.select((s) => s.myRoute));
     return _StartPrompt(
-      route: state.route,
+      route: previewRoute,
       isSectionLoading: state.isSectionLoading,
       description: '나의 경로를 따라 실시간으로 안내받으세요.',
       buttonLabel: '경로 안내 시작',
       onStart: () async {
-        await ref.read(myRouteProvider.notifier).startMyRoute();
-        // ✅ 나의 경로 폴리라인: routeXy 좌표를 homeProvider에 시드
-        final coords = ref.read(homeProvider).activeRoutine?.routeXy ?? const [];
-        if (coords.isNotEmpty) {
-          ref.read(homeProvider.notifier).seedMyRouteCoordinates(coords);
-        }
+        // ✅ [버그 수정] homeProvider.startRoute()를 통해 status=active 전환,
+        // STOMP 구독, 폴리라인 초기화를 한번에 처리.
+        // myRouteProvider.startMyRoute()는 homeProvider.startRoute() 내에서 호출됨.
+        await ref.read(homeProvider.notifier).startRoute();
       },
     );
   }
@@ -612,6 +641,12 @@ class _RecoRouteTabState extends ConsumerState<_RecoRouteTab> {
             // (추천/우회 경로로 전환 시 나의 경로 STOMP 구독 해제 + GPS 전환)
             if (ref.read(myRouteProvider).isActive) {
               await ref.read(myRouteProvider.notifier).stopMyRoute();
+            }
+
+            // ── 공통: 이미 추천/우회 경로가 활성 중이면 먼저 정지 ──────────
+            // (추천→우회, 우회→추천 재전환 시 이전 route/currentSection 혼합 방지)
+            if (ref.read(recoRouteProvider).isActive) {
+              await ref.read(recoRouteProvider.notifier).stopRecoRoute();
             }
 
             // ── 우회 경로 선택 시 ─────────────────────────────────────────
@@ -1992,6 +2027,7 @@ class _StartPrompt extends StatelessWidget {
                 index: e.key,
                 isLast: e.key == route!.path.length - 1,
                 currentSection: null, // 시작 전 → 색칠 없음
+                allPaths: route!.path,
               ),
             ),
             const SizedBox(height: 24),
@@ -2190,11 +2226,13 @@ class _RouteDetail extends StatelessWidget {
     required this.route,
     required this.currentSection,
     required this.onStop,
+    this.liveStatusText,
   });
 
   final LiveRouteModel route;
   final CurrentSectionModel? currentSection;
   final VoidCallback onStop;
+  final String? liveStatusText;
 
   @override
   Widget build(BuildContext context) {
@@ -2207,7 +2245,7 @@ class _RouteDetail extends StatelessWidget {
           const SizedBox(height: 16),
 
           if (currentSection != null) ...[
-            _CurrentSectionBanner(section: currentSection!, route: route),
+            _CurrentSectionBanner(section: currentSection!, route: route, liveStatusText: liveStatusText),
             const SizedBox(height: 16),
           ],
 
@@ -2217,6 +2255,7 @@ class _RouteDetail extends StatelessWidget {
               index: e.key,
               isLast: e.key == route.path.length - 1,
               currentSection: currentSection,
+              allPaths: route.path,
             ),
           ),
           const SizedBox(height: 24),
@@ -2323,49 +2362,112 @@ class _SummaryChip extends StatelessWidget {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class _CurrentSectionBanner extends StatelessWidget {
-  const _CurrentSectionBanner({required this.section, required this.route});
+  const _CurrentSectionBanner({required this.section, required this.route, this.liveStatusText});
   final CurrentSectionModel section;
   final LiveRouteModel route;
+  final String? liveStatusText;
+
+  /// liveStatus가 있으면 그것을 우선 사용해 currentType을 보정한다.
+  /// section[idx]가 아직 walk를 가리켜도 서버가 탑승중이라 했으면 bus/subway로 판단.
+  String get _effectiveSectionType {
+    final status = liveStatusText;
+    if (status == '탑승중') {
+      // 실제 탑승 중인 교통수단 타입을 section 배열에서 찾는다
+      final sectionType = section.currentType;
+      if (sectionType != 'walk') return sectionType;
+      // section[idx]가 walk이면, idx 이후 첫 번째 bus/subway 키를 찾아 반환
+      for (int i = section.idx; i < section.section.length; i++) {
+        final key = section.section[i];
+        if (key.startsWith('bus:')) return 'bus';
+        if (key.startsWith('subway:')) return 'subway';
+      }
+    }
+    if (status == '도보중') return 'walk';
+    return section.currentType;
+  }
+
+  String? get _effectiveBusNo {
+    // section[idx]가 bus:xxx이면 바로 반환
+    final direct = section.currentBusNo;
+    if (direct != null) return direct;
+    // liveStatus가 탑승중인데 idx가 walk이면 idx 이후 첫 bus: 키 반환
+    for (int i = section.idx; i < section.section.length; i++) {
+      final key = section.section[i];
+      if (key.startsWith('bus:')) return key.substring(4);
+    }
+    return null;
+  }
+
+  String? get _effectiveSubwayLine {
+    final direct = section.currentSubwayLine;
+    if (direct != null) return direct;
+    for (int i = section.idx; i < section.section.length; i++) {
+      final key = section.section[i];
+      if (key.startsWith('subway:')) {
+        final raw = key.substring(7);
+        if (raw.contains('호선') || raw.contains('선')) return raw;
+        return '${raw}호선';
+      }
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     final current = section.currentXY;
-    final sectionType = section.currentType;
+    final sectionType = _effectiveSectionType;
 
     final (icon, color, label) = switch (sectionType) {
       'bus'    => (
           Icons.directions_bus_rounded,
           AppColors.bus,
-          '버스 탑승 중 · ${section.currentBusNo ?? ''}번',
+          '버스 탑승 중 · ${_effectiveBusNo ?? ''}번',
         ),
       'subway' => (
           Icons.directions_subway_rounded,
           AppColors.subway,
-          '지하철 탑승 중 · ${section.currentSubwayLine ?? ''}',
+          '지하철 탑승 중 · ${_effectiveSubwayLine ?? ''}',
         ),
       _ => (Icons.directions_walk_rounded, AppColors.walk, '도보 이동 중'),
     };
 
-    // 현재 구간 이후 다음 구간 파악
+    // ✅ [버그 수정] 다음 구간 계산:
+    // section.section 배열에서 현재 idx 이후 처음으로 타입이 바뀌는 식별자를 찾고
+    // path 배열에서 매칭한다.
+    //
+    // 이전 코드의 문제: groupedSections 기반 매핑에서 path[0]=walk이면
+    // groups[0]도 walk여야 하는데, walk path를 먼저 "소비"하기 전에
+    // bus path를 순회하면 타입 불일치 → break → 매핑 실패.
+    //
+    // 올바른 방법: section.section[idx] 자체가 현재 위치의 직접적 식별자이므로
+    // 그 이후 첫 번째 다른 식별자를 찾아 path와 매칭하면 경로 순서에 무관하게 정확함.
     final paths = route.path;
-    final currentIdx = section.idx;
-    // section.idx 기반으로 현재 PathModel 인덱스 추정 (축적 구간 매핑)
     String? nextLabel;
-    if (paths.isNotEmpty) {
-      // 현재 타입과 다음 타입 확인
-      // 현재 sectionType 기준으로 현재 path를 찾고, 그 다음 path를 가져옴
-      int? currentPathIdx;
-      for (int i = 0; i < paths.length; i++) {
-        final p = paths[i];
-        if (sectionType == 'walk' && p.isWalking) { currentPathIdx = i; break; }
-        if (sectionType == 'bus' && p.isBus) { currentPathIdx = i; break; }
-        if (sectionType == 'subway' && p.isSubway) { currentPathIdx = i; break; }
+    if (paths.isNotEmpty && section.section.isNotEmpty) {
+      final clampedIdx = section.idx.clamp(0, section.section.length - 1);
+      final currentSectionKey = section.section[clampedIdx];
+      // 현재 idx 이후 첫 번째로 타입이 바뀌는 섹션 식별자
+      String? nextSectionKey;
+      for (int i = clampedIdx + 1; i < section.section.length; i++) {
+        if (section.section[i] != currentSectionKey) {
+          nextSectionKey = section.section[i];
+          break;
+        }
       }
-      if (currentPathIdx != null && currentPathIdx + 1 < paths.length) {
-        final next = paths[currentPathIdx + 1];
-        if (next.isWalking) nextLabel = '도보';
-        else if (next.isBus) nextLabel = '버스 ${next.busNumbersLabel}';
-        else if (next.isSubway) nextLabel = '지하철 ${next.subwayLineName}';
+
+      if (nextSectionKey != null) {
+        if (nextSectionKey == 'walk') {
+          nextLabel = '도보';
+        } else if (nextSectionKey.startsWith('bus:')) {
+          final busNo = nextSectionKey.substring(4);
+          final matched = paths
+              .where((p) => p.isBus && p.busNumbers.contains(busNo))
+              .firstOrNull;
+          nextLabel = matched != null ? '버스 ${matched.busNumbersLabel}' : '버스 $busNo';
+        } else if (nextSectionKey.startsWith('subway:')) {
+          final lineName = nextSectionKey.substring(7);
+          nextLabel = '지하철 $lineName';
+        }
       }
     }
 
@@ -2416,13 +2518,31 @@ class _CurrentSectionBanner extends StatelessWidget {
                   ],
                 ),
                 if (current?.stationName != null)
-                  Text(
-                    '현재 위치: ${current!.stationName!}',
-                    style: TextStyle(
-                      color: color.withOpacity(0.8),
-                      fontSize: 12,
-                    ),
-                  ),
+                  Builder(builder: (context) {
+                    // 현재 정류장 이름
+                    final currentName = current!.stationName!;
+
+                    // 다음 정류장 이름: idx+1 위치의 stationName
+                    final cs = section;
+                    final nextIdx = cs.idx + 1;
+                    String? nextStopName;
+                    if (nextIdx < cs.xy.length) {
+                      nextStopName = cs.xy[nextIdx].stationName;
+                    }
+
+                    // 다음 정류장이 없으면 다음 교통수단(nextLabel)으로 fallback
+                    final nextDisplay = nextStopName ?? nextLabel;
+
+                    return Text(
+                      nextDisplay != null
+                          ? '현재 위치: $currentName → 다음: $nextDisplay'
+                          : '현재 위치: $currentName',
+                      style: TextStyle(
+                        color: color.withOpacity(0.8),
+                        fontSize: 12,
+                      ),
+                    );
+                  }),
               ],
             ),
           ),
@@ -2490,12 +2610,14 @@ class _PathSegmentCard extends StatelessWidget {
     required this.index,
     required this.isLast,
     required this.currentSection,
+    required this.allPaths,
   });
 
   final PathModel path;
   final int index;
   final bool isLast;
   final CurrentSectionModel? currentSection;
+  final List<PathModel> allPaths;
 
   // 이 PathModel에 해당하는 section 식별자 목록
   // walk → 'walk', bus:5535 → 'bus:5535', subway:2호선 → 'subway:2호선'
@@ -2512,22 +2634,48 @@ class _PathSegmentCard extends StatelessWidget {
 
   /// 이 구간에 해당하는 xy 인덱스 범위 [start, end] 반환
   /// 없으면 null
+  ///
+  /// ✅ [버그 수정2] path를 groupedSections에 순서 기반으로 매핑
+  /// 버스 구간(path[i])에 번호가 여러 개(5516·5536)면 section 배열에서
+  /// "bus:5516", "bus:5536"이 각각 별도 그룹으로 분리되어
+  /// groups.length > paths.length 가 되어 단순 index 매핑이 틀림.
+  ///
+  /// 올바른 방법: path 배열을 순서대로 순회하며 각 path의 타입(walk/bus/subway)에
+  /// 맞는 연속된 그룹들을 묶어 range를 계산.
   _XyRange? _xyRangeForPath(CurrentSectionModel cs) {
-    final keys = _sectionKeysForPath();
-    int? start;
-    int? end;
-    for (int i = 0; i < cs.section.length; i++) {
-      final s = cs.section[i];
-      final match = keys.any((k) => s == k || s.contains(k.split(':').last));
-      if (match) {
-        start ??= i;
-        end = i;
-      } else if (start != null) {
-        break; // 연속 구간이 끝났으면 중단
+    final groups = cs.groupedSections;
+    if (groups.isEmpty) return null;
+
+    // path 배열(allPaths)을 0번부터 순서대로 순회하며 각 path에 해당하는 그룹 범위를 계산.
+    // groups를 groupCursor로 추적하며 pathIdx번 path 타입에 맞는 연속 그룹을 소비.
+    int groupCursor = 0;
+    for (int pathIdx = 0; pathIdx <= index; pathIdx++) {
+      if (groupCursor >= groups.length) return null;
+      if (pathIdx >= allPaths.length) return null;
+
+      final curPath = allPaths[pathIdx]; // ← 반드시 pathIdx번 path 타입 사용
+      final bool Function(GroupedSection) sameType;
+      if (curPath.isWalking)     sameType = (g) => g.isWalk;
+      else if (curPath.isBus)    sameType = (g) => g.isBus;
+      else if (curPath.isSubway) sameType = (g) => g.isSubway;
+      else                       sameType = (_) => false;
+
+      // pathIdx번 path 타입과 현재 그룹 타입이 맞지 않으면 매핑 실패
+      if (!sameType(groups[groupCursor])) return null;
+
+      final startGroup = groupCursor;
+      // 연속된 같은 타입(bus:5516, bus:5536 등) 그룹을 모두 소비
+      while (groupCursor < groups.length && sameType(groups[groupCursor])) {
+        groupCursor++;
+      }
+
+      if (pathIdx == index) {
+        final rangeStart = groups[startGroup].startIdx;
+        final rangeEnd   = groups[groupCursor - 1].endIdx;
+        return _XyRange(rangeStart, rangeEnd);
       }
     }
-    if (start == null) return null;
-    return _XyRange(start!, end!);
+    return null;
   }
 
   /// 현재 구간인지 (idx가 이 path 범위 안)
@@ -2641,7 +2789,7 @@ class _PathSegmentCard extends StatelessWidget {
                             fontSize: 14,
                           ),
                         ),
-                        if (isCurrent) ...[
+                        if (isCurrent && path.isWalking) ...[
                           const SizedBox(width: 6),
                           Container(
                             padding: const EdgeInsets.symmetric(
@@ -2740,6 +2888,7 @@ class _PathSegmentCard extends StatelessWidget {
       result.add(_StationProgress(
         name: name,
         isReached: i <= cs.idx, // idx 포함까지 색칠
+        isCurrent: i == cs.idx, // 현재 위치 정류장
       ));
     }
     return result;
@@ -2759,8 +2908,9 @@ class _XyRange {
 class _StationProgress {
   final String name;
   final bool isReached; // true = 지나온/현재, false = 아직 미도달
+  final bool isCurrent; // true = 현재 위치 정류장
 
-  const _StationProgress({required this.name, required this.isReached});
+  const _StationProgress({required this.name, required this.isReached, this.isCurrent = false});
 }
 
 class _StationProgressRow extends StatelessWidget {
@@ -2809,16 +2959,39 @@ class _StationProgressRow extends StatelessWidget {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  s.name,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: s.isReached
-                        ? AppColors.textPrimary
-                        : AppColors.textSecondary.withOpacity(0.5),
-                    fontWeight:
-                        s.isReached ? FontWeight.w500 : FontWeight.w400,
-                  ),
+                child: Row(
+                  children: [
+                    Text(
+                      s.name,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: s.isReached
+                            ? AppColors.textPrimary
+                            : AppColors.textSecondary.withOpacity(0.5),
+                        fontWeight:
+                            s.isReached ? FontWeight.w500 : FontWeight.w400,
+                      ),
+                    ),
+                    if (s.isCurrent) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          '현재',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),

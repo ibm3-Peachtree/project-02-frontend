@@ -87,7 +87,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               if (ref.read(recoRouteProvider).isActive) {
                 await ref.read(recoRouteProvider.notifier).stopRecoRoute();
               }
-              if (ref.read(myRouteProvider).isActive) {
+              else if (ref.read(myRouteProvider).isActive) {
                 await ref.read(myRouteProvider.notifier).stopMyRoute();
               }
               ref.read(homeProvider.notifier).stopRoute();
@@ -1929,7 +1929,6 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
     final isOverdue = home.isDepartureOverdue;
     final minutesOverdue = home.minutesOverdue;
 
-    // ✅ [버그 수정] selectedRouteTabProvider 변화를 감지해 _tabController 동기화
     // routine_detail_screen에서 추천 경로 선택 시 탭이 자동으로 전환됩니다.
     ref.listen<RouteTab>(selectedRouteTabProvider, (prev, next) {
       final targetIndex = next == RouteTab.reco ? 1 : 0;
@@ -2108,8 +2107,6 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                           ),
                         ),
                         // ── 추천 경로 탭 ──────────────────────────────────
-                        // RecoRouteTabContent: recoRouteProvider 기반으로
-                        // 카드 목록 선택 → 실시간 구간 안내(이미지2)까지 모두 처리
                         RecoRouteTabContent(
                           scrollController: scrollController,
                           // "현재 경로 유지" 버튼: Navigator.pop() 대신 탭 전환
@@ -2230,9 +2227,6 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
 
   void didUpdateWidget(_ActiveView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // home prop이 제거됐으므로 Consumer + ref.listen으로 지도 갱신 처리.
-    // build()에서 ref.watch를 통해 homeProvider 변화를 감지하면
-    // NaverMapController가 있을 때 _drawRouteOnMap이 호출됨.
   }
 
   Future<void> _moveToCurrentLocation(NaverMapController controller) async {
@@ -2264,17 +2258,28 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     // _routeDrawn을 false로 먼저 세팅하면 GPS 콜백이 즉시 재진입해
     // 무한 루프가 생기므로, 그리기 완료 후에만 true로 세팅한다.
 
-    final section = ref.read(homeProvider).currentSectionData;
+    final homeState = ref.read(homeProvider);
+    // ✅ [버그수정] deprecated currentSectionData 대신 실제 활성 경로 타입에 맞는
+    // section 데이터를 사용. isUsingRecoRoute에 따라 reco/my section 선택.
+    final section = homeState.isUsingRecoRoute
+        ? homeState.recoCurrentSectionData
+        : homeState.myCurrentSectionData;
+
+    // ✅ [버그수정] coords가 비어있으면 routeXy fallback 시도
+    final effectiveCoords = coords.isNotEmpty
+        ? coords
+        : (homeState.activeRoutine?.routeXy ?? const []);
+
     // idx = nearestIndex (현재 위치, 0-based) → idx까지 지나온 구간, idx+1부터 미도달
-    final currentIdx = section != null ? section.idx.clamp(0, coords.length - 1) : -1;
+    final currentIdx = section != null ? section.idx.clamp(0, effectiveCoords.length - 1) : -1;
 
     // ── 1. 좌표 포인트 수집 ─────────────────────────────────
     // ✅ [버그 수정] hasCoord가 있는 포인트만 수집.
     // 이전 walk 좌표 없는 포인트의 prev/next 보간 로직은 중복 포인트를 추가해
     // 폴리라인이 비정상 렌더링되는 문제가 있었음.
     final allPoints = <({NLatLng pt, String type, int xyIdx})>[];
-    for (var i = 0; i < coords.length; i++) {
-      final c = coords[i];
+    for (var i = 0; i < effectiveCoords.length; i++) {
+      final c = effectiveCoords[i];
       if (c.hasCoord) {
         allPoints.add((pt: NLatLng(c.y!, c.x!), type: c.type ?? 'walk', xyIdx: i));
       }
@@ -2331,8 +2336,8 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
 
     // ── 3. getCurrentSection xy[idx] → 현재 위치 마커 ────────
     NLatLng? sectionTarget;
-    if (section != null && section.idx < coords.length) {
-      final xyPoint = coords[section.idx];
+    if (section != null && section.idx < effectiveCoords.length) {
+      final xyPoint = effectiveCoords[section.idx];
       if (xyPoint.hasCoord) {
         sectionTarget = NLatLng(xyPoint.y!, xyPoint.x!);
         final stationName = xyPoint.stationName;
@@ -2412,7 +2417,7 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
               ? next.routeCoordinates
               : (next.activeRoutine?.routeXy ?? const []));
       final prevActiveCoords = isReco ? prev?.recoRouteCoordinates : prev?.routeCoordinates;
-      // ✅ [버그 수정] 리스트 참조 비교(!=)는 항상 true가 될 수 있으므로
+      // 리스트 참조 비교(!=)는 항상 true가 될 수 있으므로
       // 길이 변화 또는 첫/마지막 좌표 변화로 실질적 변경 여부를 판단
       final coordsChanged = prevActiveCoords?.length != activeCoords.length ||
           (activeCoords.isNotEmpty &&
@@ -2420,8 +2425,13 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
                   prevActiveCoords?.first.x != activeCoords.first.x ||
                   prevActiveCoords?.last.x != activeCoords.last.x));
       final stepChanged = prev?.currentStepIndex != next.currentStepIndex;
-      final sectionChanged = prev?.currentSectionData?.idx != next.currentSectionData?.idx;
-      if (coordsChanged || stepChanged || sectionChanged) {
+      // ✅ [버그수정] currentSectionData(deprecated)는 selectedRouteType 기준으로
+      // my 또는 reco 중 하나만 반환하므로, 두 섹션 데이터 변화를 모두 감지한다.
+      final mySectionChanged = prev?.myCurrentSectionData?.idx != next.myCurrentSectionData?.idx;
+      final recoSectionChanged = prev?.recoCurrentSectionData?.idx != next.recoCurrentSectionData?.idx;
+      // status가 active로 바뀌는 순간에도 폴리라인을 강제로 그림
+      final statusActivated = prev?.status != HomeStatus.active && next.status == HomeStatus.active;
+      if (coordsChanged || stepChanged || mySectionChanged || recoSectionChanged || statusActivated) {
         _routeDrawn = false; // 좌표/구간 변경 시 재드로우 플래그 리셋
         _drawRouteOnMap(_mapController!, activeCoords);
       }
@@ -3137,7 +3147,7 @@ class _ActivePanel extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '현재 위치: $currentStationName${stops != null ? "  ·  $stops정거장 남음" : ""}${_nextSectionLabel() != null ? "  →  다음: ${_nextSectionLabel()}" : ""}',
+                  '현재 위치: $currentStationName${stops != null ? "  ·  $stops정거장 남음" : ""}',
                   style: const TextStyle(fontSize: 12, color: AppColors.subway),
                 ),
               ),
@@ -4931,7 +4941,7 @@ class _RoutineStepDots extends StatelessWidget {
     final sec = sectionData;
     if (sec == null) return currentStep;
     final raw = sec.section;
-    final currentRawIdx = (sec.idx - 1).clamp(0, raw.length - 1);
+    final currentRawIdx = (sec.idx).clamp(0, raw.length - 1);
     String? prev;
     int ci = 0;
     for (var i = 0; i <= currentRawIdx && i < raw.length; i++) {

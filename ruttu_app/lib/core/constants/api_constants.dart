@@ -47,8 +47,8 @@ class ApiConstants {
   static String liveMyRoute(int routineId) => '/me/routines/active/route/$routineId';
   // GET /me/routines/active/reco/{routineId}
   static String liveRecoRouteList(int routineId) => '/me/routines/active/reco/$routineId';
-  // POST /me/routines/active/reco/{recoId}
-  static String liveRecoSave(int recoId) => '/me/routines/active/reco/$recoId';
+  // POST /me/routines/active/reco/detail/{recoId}
+  static String liveRecoSave(int recoId) => '/me/routines/active/reco/detail/$recoId';
   // GET /me/routines/active/reco/detail/{recoId} — 추천 경로 상세
   static String liveRecoRouteDetail(int recoId) => '/me/routines/active/reco/detail/$recoId';
   // GET /me/routines/active/reco/detour/{pathId}

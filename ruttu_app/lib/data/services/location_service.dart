@@ -33,9 +33,12 @@ class LocationService {
   /// 권한 확인 후 위치 스트림을 반환합니다.
   Stream<Position> getLocationStream() {
     return Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
+      locationSettings: AndroidSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 10,
+        // 에뮬레이터·실내 등 GPS 이동이 없어도 최소 5초마다 이벤트 발생
+        intervalDuration: const Duration(seconds: 5),
+        forceLocationManager: false,
       ),
     );
   }

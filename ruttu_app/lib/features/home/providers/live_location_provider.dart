@@ -89,20 +89,41 @@ final liveLocationProvider = Provider<void>((ref) {
         '  lat=$latitude  lng=$longitude');
   }
 
+  bool _starting = false;
+
   void stopGps() {
     if (sub == null) return;
     sub?.cancel();
     sub = null;
+    _starting = false;
     try { ref.read(gpsActiveProvider.notifier).state = false; } catch (_) {}
     debugPrint('[LiveLocation] GPS 종료됨');
   }
 
+
   void startGps() {
-    if (sub != null) return;
+    if (sub != null || _starting) return;
+    _starting = true;
 
     ensureStompConnected();
 
     locationService.ensurePermission().then((_) {
+      // 즉시 현재 위치를 한 번 전송 (에뮬레이터·GPS 이동 없는 경우 대비)
+      Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high)
+          .then((pos) {
+        final isRecoActive = ref.read(recoRouteProvider).isActive;
+        if (ref.read(homeProvider).activeRoutine == null) return;
+        sendLocation(
+          latitude:  pos.latitude,
+          longitude: pos.longitude,
+          speed:     pos.speed < 0 ? 0.0 : pos.speed,
+          accuracy:  pos.accuracy,
+          isReco:    isRecoActive,
+        );
+        debugPrint('[LiveLocation] 즉시 위치 전송 (startGps) isReco=$isRecoActive');
+      }).catchError((e) {
+        debugPrint('[LiveLocation] 즉시 위치 전송 실패 (무시): $e');
+      });
       sub = locationService.getLocationStream().listen(
         (position) async {
           try {
@@ -172,7 +193,9 @@ final liveLocationProvider = Provider<void>((ref) {
         },
       );
       debugPrint('[LiveLocation] GPS 스트림 구독 시작');
+      _starting = false;
     }).catchError((e) {
+      _starting = false;
       debugPrint('[LiveLocation] 권한 오류: $e');
     });
   }
@@ -224,7 +247,25 @@ final liveLocationProvider = Provider<void>((ref) {
     if (prev?.isActive != true && next.isActive == true) {
       debugPrint('[LiveLocation] 추천 경로 시작 → GPS 켜기 (/app/location/reco)');
       ensureStompConnected();
-      startGps();
+      if (sub != null) {
+        // GPS가 이미 켜진 상태 → isReco=true로 즉시 한 번 전송
+        Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high)
+            .then((pos) {
+          if (ref.read(homeProvider).activeRoutine == null) return;
+          sendLocation(
+            latitude:  pos.latitude,
+            longitude: pos.longitude,
+            speed:     pos.speed < 0 ? 0.0 : pos.speed,
+            accuracy:  pos.accuracy,
+            isReco:    true,
+          );
+          debugPrint('[LiveLocation] reco 즉시 위치 전송 (GPS 이미 활성)');
+        }).catchError((e) {
+          debugPrint('[LiveLocation] reco 즉시 전송 실패 (무시): $e');
+        });
+      } else {
+        startGps();
+      }
     }
     if (prev?.isActive == true && next.isActive != true) {
       // myRoute도 꺼진 경우에만 GPS 중단
