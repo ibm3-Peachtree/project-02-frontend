@@ -18,7 +18,8 @@ import 'live_route_provider.dart' show recoRouteProvider;
 // 백엔드 LiveLocationService.getMyCurrentSection()이
 // /user/queue/location/my 로 CurrentSectionDto를 push함.
 // Flutter는 이 push를 구독하여 routeCoordinates(폴리라인 좌표)를 실시간 갱신.
-const _queueLocationMy = '/user/queue/location/my';
+const _queueLocationMy   = '/user/queue/location/my';
+const _queueLocationReco = '/user/queue/location/reco';
 
 final homeProvider = StateNotifierProvider<HomeNotifier, HomeState>((ref) {
   final notifier = HomeNotifier(ref.read(homeRepositoryProvider), ref);
@@ -348,9 +349,10 @@ class HomeNotifier extends StateNotifier<HomeState> {
       recoCurrentSectionData: isReco ? section : state.recoCurrentSectionData,
     );
 
-    // ✅ 폴링 + STOMP /user/queue/location/my 구독 동시 시작
+    // ✅ 폴링 + STOMP /user/queue/location/my, /reco 구독 동시 시작
     _startPolling();
     _subscribeLocationMy();
+    _subscribeLocationReco();
 
     // 자동 시작 타이머 중단 (수동 시작 포함) + 자동 종료 타이머 시작
     _stopAutoStartMonitor();
@@ -379,8 +381,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
       _queueLocationMy,
       (json) {
         if (!mounted) return;
-        // active 상태일 때만 처리 (추천 경로 모드면 나의 경로 폴리라인 갱신 불필요)
-        if (state.status != HomeStatus.active || state.isUsingRecoRoute) return;
+        // ✅ 추천 경로 모드면 나의 경로 폴리라인 갱신 불필요 — 하지만 myCurrentSectionData는 갱신
+        // status 체크 제거: myRouteProvider 단독 안내 시에도 STOMP 데이터 반영
         try {
           final section = CurrentSectionModel.fromJson(json);
 
@@ -388,17 +390,17 @@ class HomeNotifier extends StateNotifier<HomeState> {
               ? _resolvePathIndex(section, state.myRoute!.path.length)
               : state.myStepIndex;
 
-          // xy가 있으면 폴리라인 좌표 갱신, 없으면 기존 좌표 유지
-          final newCoords = section.xy.isNotEmpty
+          // 추천 경로 안내 중이면 폴리라인은 건드리지 않고 mySection 데이터만 갱신
+          final newCoords = (!state.isUsingRecoRoute && section.xy.isNotEmpty)
               ? section.xy
               : state.routeCoordinates;
 
           state = state.copyWith(
             routeCoordinates: newCoords,
             myCurrentSectionData: section,
-            currentStepIndex: stepIndex,
+            currentStepIndex: state.isUsingRecoRoute ? state.currentStepIndex : stepIndex,
             myStepIndex: stepIndex,
-            stepRemainingMinutes: state.myRoute != null
+            stepRemainingMinutes: (!state.isUsingRecoRoute && state.myRoute != null)
                 ? _remainingMinutes(state.myRoute!, stepIndex)
                 : state.stepRemainingMinutes,
           );
@@ -412,6 +414,52 @@ class HomeNotifier extends StateNotifier<HomeState> {
       subscriberKey: 'homeProvider_my',
     );
     debugPrint('[HomeNotifier] /queue/location/my 구독 등록');
+  }
+
+  // ── STOMP /user/queue/location/reco 구독 ────────────────────────────
+  //
+  // recoRouteProvider에도 같은 destination 구독이 있으나,
+  // homeProvider는 지도 폴리라인(recoRouteCoordinates)과 stepIndex 갱신을 담당하므로
+  // 독립적으로 구독이 필요하다.
+  void _subscribeLocationReco() {
+    StompService.instance.subscribe(
+      _queueLocationReco,
+      (json) {
+        if (!mounted) return;
+        try {
+          final section = CurrentSectionModel.fromJson(json);
+          final recoStepIdx = state.recommendedRoute != null
+              ? _resolvePathIndex(section, state.recommendedRoute!.path.length)
+              : state.recoStepIndex;
+          final newRecoCoords = section.xy.isNotEmpty
+              ? section.xy
+              : state.recoRouteCoordinates;
+          state = state.copyWith(
+            recoCurrentSectionData: section,
+            recoStepIndex: recoStepIdx,
+            recoRouteCoordinates: newRecoCoords,
+            currentStepIndex: state.isUsingRecoRoute ? recoStepIdx : state.currentStepIndex,
+            stepRemainingMinutes: (state.isUsingRecoRoute && state.recommendedRoute != null)
+                ? _remainingMinutes(state.recommendedRoute!, recoStepIdx)
+                : state.stepRemainingMinutes,
+          );
+          debugPrint('[HomeNotifier] /queue/location/reco 수신 — '
+              'idx=${section.idx} coords=${newRecoCoords.length}개 stepIdx=$recoStepIdx');
+        } catch (e) {
+          debugPrint('[HomeNotifier] /queue/location/reco 파싱 오류: $e\njson=$json');
+        }
+      },
+      subscriberKey: 'homeProvider_reco',
+    );
+    debugPrint('[HomeNotifier] /queue/location/reco 구독 등록');
+  }
+
+  void _unsubscribeLocationReco() {
+    StompService.instance.unsubscribe(
+      _queueLocationReco,
+      subscriberKey: 'homeProvider_reco',
+    );
+    debugPrint('[HomeNotifier] /queue/location/reco 구독 해제');
   }
 
   void _unsubscribeLocationMy() {
@@ -603,17 +651,11 @@ class HomeNotifier extends StateNotifier<HomeState> {
       return;
     }
 
-    // 나의 경로 section은 STOMP push(_subscribeLocationMy)가 실시간으로 처리하므로
-    // _poll()에서는 REST 호출을 생략하고 recoRoute section만 처리.
-    // 단, isUsingRecoRoute=false일 때 STOMP가 끊긴 경우 fallback으로 REST 조회.
-    CurrentSectionModel? mySection;
-    if (!state.isUsingRecoRoute) {
-      try {
-        mySection = await _repository.getCurrentSection();
-      } catch (e) {
-        debugPrint('[LivePoll] getCurrentSection REST 실패 (무시됨): $e');
-      }
-    }
+    // STOMP push(_subscribeLocationMy / _subscribeLocationReco)가 실시간으로
+    // section을 처리하므로 _poll()에서는 REST 호출 없이 현재 state 기반으로만 계산.
+    // (REST 폴링은 STOMP 단절 시 _checkAutoArrive()가 GPS 직접 확인으로 대체함)
+    final mySection      = state.myCurrentSectionData;
+    final recoSection    = state.recoCurrentSectionData;
 
     if (!mounted) return;
 
@@ -621,20 +663,17 @@ class HomeNotifier extends StateNotifier<HomeState> {
         ? _resolvePathIndex(mySection, state.myRoute!.path.length)
         : state.myStepIndex;
 
-    final recoSectionData = state.recoCurrentSectionData;
-    final recoStepIdx = (recoSectionData != null && state.recommendedRoute != null)
-        ? _resolvePathIndex(recoSectionData, state.recommendedRoute!.path.length)
+    final recoStepIdx = (recoSection != null && state.recommendedRoute != null)
+        ? _resolvePathIndex(recoSection, state.recommendedRoute!.path.length)
         : state.recoStepIndex;
 
-    final newRecoCoords = (recoSectionData?.xy.isNotEmpty == true)
-        ? recoSectionData!.xy
+    final newRecoCoords = (recoSection?.xy.isNotEmpty == true)
+        ? recoSection!.xy
         : state.recoRouteCoordinates;
 
     final stepIndex = state.isUsingRecoRoute ? recoStepIdx : myStepIdx;
     final activeRoute = state.isUsingRecoRoute ? state.recommendedRoute : state.myRoute;
 
-    // 나의 경로 좌표: STOMP push가 이미 갱신했을 수 있으므로 REST section.xy가
-    // 있을 때만 덮어씀. 없으면 현재 state 유지 (STOMP가 갱신한 값 보존).
     final newMyCoords = (mySection?.xy.isNotEmpty == true)
         ? mySection!.xy
         : state.routeCoordinates;
@@ -647,13 +686,12 @@ class HomeNotifier extends StateNotifier<HomeState> {
           activeRoute != null ? _remainingMinutes(activeRoute, stepIndex) : 0,
       routeCoordinates: newMyCoords,
       recoRouteCoordinates: newRecoCoords,
-      myCurrentSectionData: mySection ?? state.myCurrentSectionData,
     );
 
     debugPrint('[LivePoll] 완료 — '
         'isReco:${state.isUsingRecoRoute} myStepIdx:$myStepIdx recoStepIdx:$recoStepIdx '
         'myCoords:${newMyCoords.length}개 recoCoords:${newRecoCoords.length}개 '
-        'recoSection.idx=${recoSectionData?.idx} recoSection.type=${recoSectionData?.currentType}');
+        'recoSection.idx=${recoSection?.idx} recoSection.type=${recoSection?.currentType}');
   }
 
   int _remainingMinutes(LiveRouteModel route, int stepIndex) {
@@ -696,6 +734,7 @@ class HomeNotifier extends StateNotifier<HomeState> {
     _liveTimer?.cancel();
     _liveTimer = null;
     _unsubscribeLocationMy(); // ✅ 도착 시 구독 해제
+    _unsubscribeLocationReco();
     _stopAutoArriveMonitor(); // 자동 종료 타이머 정리
 
     final routineId = state.activeRoutine?.routineId;
@@ -743,6 +782,7 @@ class HomeNotifier extends StateNotifier<HomeState> {
     _liveTimer?.cancel();
     _liveTimer = null;
     _unsubscribeLocationMy(); // ✅ 종료 시 구독 해제
+    _unsubscribeLocationReco();
     _stopAutoArriveMonitor(); // 자동 종료 타이머 정리
     _stopAutoStartMonitor();  // 혹시 남아있을 자동 시작 타이머 정리
 
@@ -823,8 +863,20 @@ class HomeNotifier extends StateNotifier<HomeState> {
     debugPrint('[HomeNotifier] seedMyRouteCoordinates ${coords.length}개');
   }
 
-  /// myRouteProvider STOMP /queue/location/my 수신 → homeProvider 동기화
-  /// homeProvider.status が active でなくても（myRouteProvider 単独起動）動作するよう
+  /// ✅ [버그 수정] recoRoute/myRoute isActive 전환 시 homeProvider.status를 active로 보장.
+  /// switchToRecommendedRoute()의 saveRecoRoute 실패 등으로 status가 preActive로 남은 경우 사용.
+  void ensureActive() {
+    if (state.status == HomeStatus.active) return;
+    state = state.copyWith(
+      status: HomeStatus.active,
+      isUsingRecoRoute: true,
+      departureTime: state.departureTime ?? DateTime.now(),
+    );
+    _startPolling();
+    _subscribeLocationReco();
+    debugPrint('[HomeNotifier] ensureActive: status → active (fallback)');
+  }
+
   /// status チェックを isUsingRecoRoute のみに絞る。
   void updateMySection(CurrentSectionModel section) {
     // 추천 경로 안내 중에는 나의 경로 section으로 지도를 덮어쓰지 않는다
@@ -872,9 +924,10 @@ class HomeNotifier extends StateNotifier<HomeState> {
     try {
       await _repository.saveRecoRoute(recoId);
     } catch (e) {
-      debugPrint('[switchToRecommendedRoute] saveRecoRoute 실패: $e');
-      state = state.copyWith(isLoading: false);
-      return;
+      // ✅ [버그 수정] saveRecoRoute 실패 시 early return 제거.
+      // 저장 실패해도 경로 전환(status=active, 폴리라인, STOMP 구독)은 계속 진행해야 함.
+      // 이전 코드: state.copyWith(isLoading: false); return; → status가 active로 안 바뀜
+      debugPrint('[switchToRecommendedRoute] saveRecoRoute 실패 (계속 진행): $e');
     }
 
     LiveRouteModel? freshReco;
@@ -894,7 +947,11 @@ class HomeNotifier extends StateNotifier<HomeState> {
 
     final recoCoords = recoSection?.xy.isNotEmpty == true
         ? recoSection!.xy
-        : state.recoRouteCoordinates;
+        : (state.recoRouteCoordinates.isNotEmpty
+            ? state.recoRouteCoordinates
+            // ✅ [버그 수정] section.xy도 없고 recoRouteCoordinates도 비어있으면
+            // 나의 루틴 routeXy를 폴리라인 fallback으로 사용 (폴리라인 미표시 방지)
+            : (state.activeRoutine?.routeXy ?? const []));
 
     final recoStepIdx = (recoSection != null && freshReco != null)
         ? _resolvePathIndex(recoSection, freshReco.path.length)
@@ -916,6 +973,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
 
     // 추천 경로로 전환 시 나의 경로 STOMP 구독 해제 (불필요한 수신 방지)
     _unsubscribeLocationMy();
+    // ✅ 추천 경로 STOMP 구독 시작
+    _subscribeLocationReco();
 
     // status를 active로 전환 후 polling 시작
     // (startRoute()를 호출하면 myRoute까지 같이 활성화되므로 직접 처리)
@@ -933,6 +992,8 @@ class HomeNotifier extends StateNotifier<HomeState> {
   Future<void> switchToDetourRoute(int pathId) async {
     // 나의 경로 STOMP 구독 해제
     _unsubscribeLocationMy();
+    // ✅ 추천 경로 STOMP 구독 시작
+    _subscribeLocationReco();
 
     state = state.copyWith(
       isUsingRecoRoute: true,
@@ -953,6 +1014,7 @@ void dispose() {
     _autoStartTimer?.cancel();
     _autoArriveTimer?.cancel();
     _unsubscribeLocationMy(); // ✅ dispose 시 구독 해제
+    _unsubscribeLocationReco();
     super.dispose();
   }
 

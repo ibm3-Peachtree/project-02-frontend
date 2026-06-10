@@ -40,6 +40,18 @@ class _LiveRouteTabsState extends ConsumerState<LiveRouteTabs>
     final recoState = ref.watch(recoRouteProvider);
     final currentTab = _tabController.index == 0 ? RouteTab.my : RouteTab.reco;
 
+    // ✅ [버그 수정] 추천 경로 isActive=true 전환 시 나의 경로 탭(탭0)으로 자동 이동
+    // 이미지1처럼 "나의 경로" 탭에서 추천 경로 안내 상태를 보여줘야 함
+    ref.listen<bool>(
+      recoRouteProvider.select((s) => s.isActive),
+      (prev, next) {
+        if (next && prev == false && _tabController.index != 0) {
+          _tabController.animateTo(0);
+          setState(() {});
+        }
+      },
+    );
+
     return Column(
       children: [
         Padding(
@@ -76,6 +88,56 @@ class _MyRouteTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(myRouteProvider);
+    final recoState = ref.watch(recoRouteProvider);
+
+    // ✅ [버그 수정] 추천 경로가 활성화(isActive=true)되었으면
+    // 나의 경로 탭에서 추천 경로 안내 UI를 표시 (이미지1 레이아웃)
+    if (recoState.isActive) {
+      if (recoState.isSectionLoading || recoState.isRouteLoading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      return Column(
+        children: [
+          _ActiveNavigationBanner(isReco: true),
+          Expanded(
+            child: recoState.route != null
+                ? _RouteDetail(
+                    route: recoState.route!,
+                    currentSection: recoState.currentSection,
+                    onStop: () =>
+                        ref.read(recoRouteProvider.notifier).stopRecoRoute(),
+                  )
+                : const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.check_circle_outline,
+                              size: 48, color: AppColors.primary),
+                          SizedBox(height: 12),
+                          Text(
+                            '추천 경로로 안내 중입니다.',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            '실시간으로 경로를 안내하고 있어요.',
+                            style: TextStyle(
+                                color: AppColors.textSecondary, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
+        ],
+      );
+    }
 
     // 안내 중: 구간 상세 표시
     if (state.isActive) {

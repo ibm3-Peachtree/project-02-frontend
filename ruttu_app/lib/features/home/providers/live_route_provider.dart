@@ -7,6 +7,7 @@ import '../../../data/repositories/home_repository.dart';
 import '../../../data/services/stomp_service.dart';
 import '../../auth/providers/network_provider.dart';
 import 'home_provider.dart' show homeProvider;
+import 'home_state.dart' show HomeStatus;
 
 
 // ── 탭 상태 ─────────────────────────────────────────────────────────
@@ -251,6 +252,10 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
   /// STOMP section 수신 시 외부(homeProvider)에 알리는 콜백.
   void Function(CurrentSectionModel)? onSectionUpdate;
 
+  /// recoRoute isActive=true 전환 시 homeProvider에 알리는 콜백.
+  /// switchToRecommendedRoute()가 saveRecoRoute 실패로 status를 active로 못 바꾼 경우 대비.
+  VoidCallback? onActivated;
+
   // ── 목록 ─────────────────────────────────────────────────
 
   /// homeProvider.initialize()에서 이미 받아온 데이터를 직접 주입.
@@ -479,6 +484,10 @@ class RecoRouteNotifier extends StateNotifier<RecoRouteState> {
         departureTime: DateTime.now(),
       );
 
+      // ✅ [버그 수정] isActive=true 전환 시 homeProvider.status도 active로 보장
+      // (switchToRecommendedRoute의 saveRecoRoute 실패로 status가 preActive로 남은 경우 대비)
+      onActivated?.call();
+
       // STOMP 구독 시작 — 이후 서버 push로 currentSection 수신
       _subscribeLocationReco();
     } catch (e) {
@@ -559,6 +568,17 @@ final recoRouteProvider =
     // (지도 폴리라인·진행 상태 갱신)
     notifier.onSectionUpdate = (section) {
       try { ref.read(homeProvider.notifier).updateRecoSection(section); } catch (_) {}
+    };
+    // ✅ [버그 수정] recoRoute isActive=true 시 homeProvider.status를 active로 보장.
+    // switchToRecommendedRoute()의 saveRecoRoute 실패로 status가 preActive로 남는 경우 방어.
+    notifier.onActivated = () {
+      try {
+        final homeState = ref.read(homeProvider);
+        if (homeState.status != HomeStatus.active) {
+          ref.read(homeProvider.notifier).ensureActive();
+          debugPrint('[recoRouteProvider] onActivated: homeProvider.status → active 강제 전환');
+        }
+      } catch (_) {}
     };
     // incidentDetourProvider 변화 → recoRouteProvider 상태 머지
     ref.listen<IncidentDetourState>(incidentDetourProvider, (prev, next) {

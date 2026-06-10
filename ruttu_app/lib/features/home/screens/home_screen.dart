@@ -1807,24 +1807,6 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
       final c = coords[i];
       if (c.hasCoord) {
         allPoints.add((pt: NLatLng(c.y!, c.x!), type: c.type ?? 'walk'));
-      } else if (c.type == 'walk') {
-        NLatLng? prev;
-        for (var j = i - 1; j >= 0; j--) {
-          if (coords[j].hasCoord) {
-            prev = NLatLng(coords[j].y!, coords[j].x!);
-            break;
-          }
-        }
-        NLatLng? next;
-        for (var j = i + 1; j < coords.length; j++) {
-          if (coords[j].hasCoord) {
-            next = NLatLng(coords[j].y!, coords[j].x!);
-            break;
-          }
-        }
-        if (prev != null && allPoints.isEmpty)
-          allPoints.add((pt: prev, type: 'walk'));
-        if (next != null) allPoints.add((pt: next, type: 'walk'));
       }
     }
 
@@ -2287,22 +2269,14 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     final currentIdx = section != null ? section.idx.clamp(0, coords.length - 1) : -1;
 
     // ── 1. 좌표 포인트 수집 ─────────────────────────────────
+    // ✅ [버그 수정] hasCoord가 있는 포인트만 수집.
+    // 이전 walk 좌표 없는 포인트의 prev/next 보간 로직은 중복 포인트를 추가해
+    // 폴리라인이 비정상 렌더링되는 문제가 있었음.
     final allPoints = <({NLatLng pt, String type, int xyIdx})>[];
     for (var i = 0; i < coords.length; i++) {
       final c = coords[i];
       if (c.hasCoord) {
         allPoints.add((pt: NLatLng(c.y!, c.x!), type: c.type ?? 'walk', xyIdx: i));
-      } else if (c.type == 'walk') {
-        NLatLng? prev;
-        for (var j = i - 1; j >= 0; j--) {
-          if (coords[j].hasCoord) { prev = NLatLng(coords[j].y!, coords[j].x!); break; }
-        }
-        NLatLng? next;
-        for (var j = i + 1; j < coords.length; j++) {
-          if (coords[j].hasCoord) { next = NLatLng(coords[j].y!, coords[j].x!); break; }
-        }
-        if (prev != null && allPoints.isEmpty) allPoints.add((pt: prev, type: 'walk', xyIdx: i));
-        if (next != null) allPoints.add((pt: next, type: 'walk', xyIdx: i));
       }
     }
 
@@ -2438,7 +2412,13 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
               ? next.routeCoordinates
               : (next.activeRoutine?.routeXy ?? const []));
       final prevActiveCoords = isReco ? prev?.recoRouteCoordinates : prev?.routeCoordinates;
-      final coordsChanged = prevActiveCoords != activeCoords;
+      // ✅ [버그 수정] 리스트 참조 비교(!=)는 항상 true가 될 수 있으므로
+      // 길이 변화 또는 첫/마지막 좌표 변화로 실질적 변경 여부를 판단
+      final coordsChanged = prevActiveCoords?.length != activeCoords.length ||
+          (activeCoords.isNotEmpty &&
+              (prevActiveCoords?.isEmpty == true ||
+                  prevActiveCoords?.first.x != activeCoords.first.x ||
+                  prevActiveCoords?.last.x != activeCoords.last.x));
       final stepChanged = prev?.currentStepIndex != next.currentStepIndex;
       final sectionChanged = prev?.currentSectionData?.idx != next.currentSectionData?.idx;
       if (coordsChanged || stepChanged || sectionChanged) {
