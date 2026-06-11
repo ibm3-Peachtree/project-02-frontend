@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/route_color.dart';
 import '../../../core/constants/route_constants.dart';
 import '../../../data/models/post_model.dart';
 import '../providers/community_provider.dart';
@@ -40,16 +41,16 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
             const SizedBox(height: 16),
             ...reasons.map((r) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(r, style: const TextStyle(fontSize: 15)),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    ref.read(postDetailProvider(widget.postId).notifier).reportPost(r);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('신고가 접수되었어요.')),
-                    );
-                  },
-                )),
+              contentPadding: EdgeInsets.zero,
+              title: Text(r, style: const TextStyle(fontSize: 15)),
+              onTap: () {
+                Navigator.pop(ctx);
+                ref.read(postDetailProvider(widget.postId).notifier).reportPost(r);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('신고가 접수되었어요.')),
+                );
+              },
+            )),
           ],
         ),
       ),
@@ -126,13 +127,6 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
     );
   }
 
-  Color _routeColor(String route) {
-    if (route.contains('2호선'))   return Colors.green;
-    if (route.contains('신분당선')) return Colors.red;
-    if (route.contains('3호선'))   return Colors.orange;
-    if (route.contains('147'))     return Colors.blue;
-    return AppColors.primary;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -154,80 +148,80 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
       body: state.isLoading
           ? const Center(child: CircularProgressIndicator())
           : state.post == null
-              ? const Center(child: Text('게시글을 불러올 수 없어요.'))
-              : Column(
+          ? const Center(child: Text('게시글을 불러올 수 없어요.'))
+          : Column(
+        children: [
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8 + MediaQuery.of(context).padding.bottom),
+              children: [
+                // 노선·정류장 칩
+                Row(
                   children: [
-                    Expanded(
-                      child: ListView(
-                        padding: EdgeInsets.fromLTRB(16, 16, 16, 8 + MediaQuery.of(context).padding.bottom),
-                        children: [
-                          // 노선·정류장 칩
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: _routeColor(state.post!.route)
-                                      .withValues(alpha: 0.12),
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text(
-                                  state.post!.route,
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: _routeColor(state.post!.route)),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(state.post!.station,
-                                  style: const TextStyle(
-                                      fontSize: 12,
-                                      color: AppColors.textSecondary)),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-
-                          // 제목
-                          Text(state.post!.title,
-                              style: const TextStyle(
-                                  fontSize: 18, fontWeight: FontWeight.w700)),
-                          const SizedBox(height: 8),
-
-                          // 메타: 이슈타입 · 시간 · 조회수
-                          Row(
-                            children: [
-                              _MetaChip(label: state.post!.issueTypeLabel),
-                              const SizedBox(width: 8),
-                              Text(state.post!.timeAgo,
-                                  style: const TextStyle(
-                                      fontSize: 12,
-                                      color: AppColors.textSecondary)),
-                              const SizedBox(width: 8),
-                              const Icon(Icons.visibility_outlined,
-                                  size: 13, color: AppColors.textSecondary),
-                              const SizedBox(width: 2),
-                              Text('${state.post!.viewCount}',
-                                  style: const TextStyle(
-                                      fontSize: 12,
-                                      color: AppColors.textSecondary)),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          const Divider(height: 1),
-                          const SizedBox(height: 16),
-
-                          // 본문
-                          Text(state.post!.content,
-                              style: const TextStyle(
-                                  fontSize: 15, height: 1.7)),
-                          const SizedBox(height: 24),
-                        ],
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: routeColor(state.post!.route)
+                            .withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        state.post!.route,
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: routeColor(state.post!.route)),
                       ),
                     ),
+                    const SizedBox(width: 6),
+                    Text(state.post!.station,
+                        style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary)),
                   ],
                 ),
+                const SizedBox(height: 10),
+
+                // 제목
+                Text(state.post!.title,
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+
+                // 메타: 이슈타입 · 시간 · 조회수
+                Row(
+                  children: [
+                    _MetaChip(label: state.post!.issueTypeLabel),
+                    const SizedBox(width: 8),
+                    Text(state.post!.timeAgo,
+                        style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary)),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.visibility_outlined,
+                        size: 13, color: AppColors.textSecondary),
+                    const SizedBox(width: 2),
+                    Text('${state.post!.viewCount}',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                const Divider(height: 1),
+                const SizedBox(height: 16),
+
+                // 본문
+                Text(state.post!.content,
+                    style: const TextStyle(
+                        fontSize: 15, height: 1.7)),
+                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -242,20 +236,19 @@ class _MetaChip extends StatelessWidget {
       '지연' => Colors.orange,
       '결행' => AppColors.error,
       '혼잡' => Colors.purple,
-      _     => AppColors.primary,
+      _     => AppColors.primary,//기타
     };
   }
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: _color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 12, fontWeight: FontWeight.w600, color: _color)),
-      );
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+      color: _color.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Text(label,
+        style: TextStyle(
+            fontSize: 12, fontWeight: FontWeight.w600, color: _color)),
+  );
 }
-

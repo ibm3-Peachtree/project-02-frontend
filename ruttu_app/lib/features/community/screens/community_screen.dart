@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/route_color.dart';
 import '../../../core/constants/route_constants.dart';
 import '../../../data/models/post_model.dart';
 import '../providers/community_provider.dart';
@@ -42,63 +43,63 @@ class _CommunityScreenState extends ConsumerState<CommunityScreen> {
       body: feed.isLoading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: () => ref.read(feedProvider.notifier).load(),
-              child: CustomScrollView(
-                slivers: [
-                  // HOT 게시글 배너
-                  if (feed.hotPost != null)
-                    SliverToBoxAdapter(
-                      child: _HotPostBanner(
-                        post: feed.hotPost!,
-                        onTap: () => context.push(
-                          RouteConstants.postDetail.replaceFirst(
-                              ':id', '${feed.hotPost!.postId}'),
-                        ).then((_) => ref.read(feedProvider.notifier).load()),
-                      ),
-                    ),
+        onRefresh: () => ref.read(feedProvider.notifier).load(),
+        child: CustomScrollView(
+          slivers: [
+            // HOT 게시글 배너
+            if (feed.hotPost != null)
+              SliverToBoxAdapter(
+                child: _HotPostBanner(
+                  post: feed.hotPost!,
+                  onTap: () => context.push(
+                    RouteConstants.postDetail.replaceFirst(
+                        ':id', '${feed.hotPost!.postId}'),
+                  ).then((_) => ref.read(feedProvider.notifier).load()),
+                ),
+              ),
 
-                  // 필터 행
-                  SliverPersistentHeader(
-                    pinned: true,
-                    delegate: _FilterHeaderDelegate(
-                      sortType: feed.sortType,
-                      routeFilter: feed.routeFilter,
-                      // 전체 posts(필터 전)에서 lineNumber 추출 → 동적 칩
-                      routes: feed.allRoutes,
-                      onSortChanged: (s) =>
-                          ref.read(feedProvider.notifier).setSort(s),
-                      onRouteChanged: (r) =>
-                          ref.read(feedProvider.notifier).setRouteFilter(r),
-                    ),
-                  ),
-
-                  // 게시글 목록
-                  if (feed.posts.isEmpty)
-                    const SliverFillRemaining(
-                      child: Center(
-                        child: Text('게시글이 없어요.',
-                            style: TextStyle(color: AppColors.textSecondary)),
-                      ),
-                    )
-                  else
-                    SliverPadding(
-                      padding: EdgeInsets.fromLTRB(16, 8, 16, 32 + MediaQuery.of(context).padding.bottom),
-                      sliver: SliverList(
-                        delegate: SliverChildBuilderDelegate(
-                          (_, i) => _PostCard(
-                            post: feed.posts[i],
-                            onTap: () => context.push(
-                              RouteConstants.postDetail.replaceFirst(
-                                  ':id', '${feed.posts[i].postId}'),
-                            ).then((_) => ref.read(feedProvider.notifier).load()),
-                          ),
-                          childCount: feed.posts.length,
-                        ),
-                      ),
-                    ),
-                ],
+            // 필터 행
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _FilterHeaderDelegate(
+                sortType: feed.sortType,
+                routeFilter: feed.routeFilter,
+                // 전체 posts(필터 전)에서 lineNumber 추출 → 동적 칩
+                routes: feed.allRoutes,
+                onSortChanged: (s) =>
+                    ref.read(feedProvider.notifier).setSort(s),
+                onRouteChanged: (r) =>
+                    ref.read(feedProvider.notifier).setRouteFilter(r),
               ),
             ),
+
+            // 게시글 목록
+            if (feed.posts.isEmpty)
+              const SliverFillRemaining(
+                child: Center(
+                  child: Text('게시글이 없어요.',
+                      style: TextStyle(color: AppColors.textSecondary)),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 32 + MediaQuery.of(context).padding.bottom),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                        (_, i) => _PostCard(
+                      post: feed.posts[i],
+                      onTap: () => context.push(
+                        RouteConstants.postDetail.replaceFirst(
+                            ':id', '${feed.posts[i].postId}'),
+                      ).then((_) => ref.read(feedProvider.notifier).load()),
+                    ),
+                    childCount: feed.posts.length,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -218,14 +219,14 @@ class _FilterHeaderDelegate extends SliverPersistentHeaderDelegate {
               onTap: () => onRouteChanged(null),
             ),
             ...routes.map((r) => Padding(
-                  padding: const EdgeInsets.only(left: 6),
-                  child: _SmallChip(
-                    label: r,
-                    selected: routeFilter == r,
-                    onTap: () =>
-                        onRouteChanged(routeFilter == r ? null : r),
-                  ),
-                )),
+              padding: const EdgeInsets.only(left: 6),
+              child: _SmallChip(
+                label: r,
+                selected: routeFilter == r,
+                onTap: () =>
+                    onRouteChanged(routeFilter == r ? null : r),
+              ),
+            )),
           ],
         ),
       ),
@@ -239,7 +240,7 @@ class _FilterHeaderDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(_FilterHeaderDelegate old) =>
       old.sortType != sortType || old.routeFilter != routeFilter ||
-      old.routes.length != routes.length;
+          old.routes.length != routes.length;
 }
 
 class _SmallChip extends StatelessWidget {
@@ -252,24 +253,24 @@ class _SmallChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.primary : Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-                color: selected ? AppColors.primary : AppColors.border),
-          ),
-          child: Text(label,
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight:
-                      selected ? FontWeight.w600 : FontWeight.normal,
-                  color:
-                      selected ? Colors.white : AppColors.textSecondary)),
-        ),
-      );
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: selected ? AppColors.primary : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+            color: selected ? AppColors.primary : AppColors.border),
+      ),
+      child: Text(label,
+          style: TextStyle(
+              fontSize: 13,
+              fontWeight:
+              selected ? FontWeight.w600 : FontWeight.normal,
+              color:
+              selected ? Colors.white : AppColors.textSecondary)),
+    ),
+  );
 }
 
 // ── 게시글 카드 ───────────────────────────────────
@@ -279,13 +280,6 @@ class _PostCard extends StatelessWidget {
 
   const _PostCard({required this.post, required this.onTap});
 
-  Color _routeColor(String route) {
-    if (route.contains('2호선'))   return Colors.green;
-    if (route.contains('신분당선')) return Colors.red;
-    if (route.contains('3호선'))   return Colors.orange;
-    if (route.contains('147'))     return Colors.blue;
-    return AppColors.primary;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -306,14 +300,14 @@ class _PostCard extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
-                      color: _routeColor(post.route).withValues(alpha: 0.12),
+                      color: routeColor(post.route).withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(post.route,
                         style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            color: _routeColor(post.route))),
+                            color: routeColor(post.route))),
                   ),
                   const SizedBox(width: 6),
                   Text(post.station,

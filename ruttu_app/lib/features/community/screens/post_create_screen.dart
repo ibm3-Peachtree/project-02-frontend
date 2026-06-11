@@ -17,7 +17,7 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
   final _titleController = TextEditingController();
   final _contentController = TextEditingController();
 
-  String? _selectedTransportType; // '버스' | '지하철' | '도로현황'
+  String? _selectedTransportType; // '버스' | '지하철'
   String? _selectedRoute;
   String? _selectedStation;
   String? _selectedIssueType;
@@ -57,17 +57,6 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
     });
   }
 
-  String _inferTransportType(String route) {
-    if (route.contains('호선') || route.contains('신분당선') ||
-        route.contains('경의중앙')) {
-      return '지하철';
-    }
-    if (RegExp(r'^\d').hasMatch(route) || route.startsWith('M')) {
-      return '버스';
-    }
-    return '도로현황';
-  }
-
   @override
   void dispose() {
     _titleController.dispose();
@@ -95,7 +84,6 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
     );
   }
 
-  // 한국어 → 백엔드 enum 변환
   static const _issueTypeToEnum = {
     '지연': 'DELAY',
     '결행': 'CANCELLATION',
@@ -103,15 +91,14 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
     '기타': 'ETC',
   };
   static const _transportTypeToEnum = {
-    '버스':     'BUS',
-    '지하철':   'SUBWAY',
-    '도로현황': 'SUBWAY', // 백엔드에 ROAD 없으므로 fallback
+    '버스':   'BUS',
+    '지하철': 'SUBWAY',
   };
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_selectedRoute == null) {
-      _showError('노선을 선택해주세요.');
+    if (_selectedTransportType == null || _selectedRoute == null) {
+      _showError('교통수단과 노선을 선택해주세요.');
       return;
     }
     if (_selectedIssueType == null) {
@@ -124,7 +111,7 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
       final request = CreatePostRequest(
         title:         _titleController.text.trim(),
         content:       _contentController.text.trim(),
-        transportType: _transportTypeToEnum[_selectedTransportType] ?? 'SUBWAY',
+        transportType: _transportTypeToEnum[_selectedTransportType] ?? 'BUS',
         lineNumber:    _selectedRoute!,
         stationName:   _selectedStation,
         issueType:     _issueTypeToEnum[_selectedIssueType] ?? 'ETC',
@@ -160,15 +147,15 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
             onPressed: _isSubmitting ? null : _submit,
             child: _isSubmitting
                 ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
                 : const Text('등록',
-                    style: TextStyle(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15)),
+                style: TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15)),
           ),
         ],
       ),
@@ -178,7 +165,7 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
           padding: EdgeInsets.fromLTRB(16, 16, 16, 32 + MediaQuery.of(context).padding.bottom),
           children: [
             // 교통수단 / 노선 / 정류장 선택
-            _SectionLabel(label: '교통수단 / 노선 / 정류장'),
+            _SectionLabel(label: '교통수단 / 노선 · 역(정류장)'),
             const SizedBox(height: 8),
             GestureDetector(
               onTap: _showTransportSheet,
@@ -196,58 +183,56 @@ class _PostCreateScreenState extends ConsumerState<PostCreateScreen> {
                 ),
                 child: _selectedRoute == null
                     ? Row(
-                        children: const [
-                          Icon(Icons.directions_transit_outlined,
-                              size: 18, color: AppColors.textSecondary),
-                          SizedBox(width: 8),
-                          Text('교통수단 / 노선을 선택하세요',
-                              style: TextStyle(
-                                  fontSize: 14,
-                                  color: AppColors.textSecondary)),
-                          Spacer(),
-                          Icon(Icons.chevron_right,
-                              color: AppColors.textSecondary),
-                        ],
-                      )
+                  children: const [
+                    Icon(Icons.directions_transit_outlined,
+                        size: 18, color: AppColors.textSecondary),
+                    SizedBox(width: 8),
+                    Text('교통수단 / 노선을 선택하세요',
+                        style: TextStyle(
+                            fontSize: 14,
+                            color: AppColors.textSecondary)),
+                    Spacer(),
+                    Icon(Icons.chevron_right,
+                        color: AppColors.textSecondary),
+                  ],
+                )
                     : Row(
+                  children: [
+                    _TransportTypeChip(
+                        type: _selectedTransportType ?? ''),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _TransportTypeChip(
-                              type: _selectedTransportType ?? ''),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment.start,
-                              children: [
-                                Text(_selectedRoute!,
-                                    style: const TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600)),
-                                if (_selectedStation != null) ...[
-                                  const SizedBox(height: 2),
-                                  Text(_selectedStation!,
-                                      style: const TextStyle(
-                                          fontSize: 12,
-                                          color:
-                                              AppColors.textSecondary)),
-                                ],
-                              ],
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: _showTransportSheet,
-                            style: TextButton.styleFrom(
-                                padding: EdgeInsets.zero,
-                                minimumSize: Size.zero,
-                                tapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap),
-                            child: const Text('변경',
-                                style: TextStyle(
-                                    fontSize: 13,
-                                    color: AppColors.primary)),
-                          ),
+                          Text(_selectedRoute!,
+                              style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600)),
+                          if (_selectedStation != null) ...[
+                            const SizedBox(height: 2),
+                            Text(_selectedStation!,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.textSecondary)),
+                          ],
                         ],
                       ),
+                    ),
+                    TextButton(
+                      onPressed: _showTransportSheet,
+                      style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          tapTargetSize:
+                          MaterialTapTargetSize.shrinkWrap),
+                      child: const Text('변경',
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: AppColors.primary)),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 20),
@@ -339,10 +324,9 @@ class _TransportTypeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (icon, color) = switch (type) {
-      '버스'     => (Icons.directions_bus_outlined, Colors.blue),
-      '지하철'   => (Icons.subway_outlined, Colors.green),
-      '도로현황' => (Icons.traffic_outlined, Colors.orange),
-      _          => (Icons.directions_transit_outlined, AppColors.primary),
+      '버스'   => (Icons.directions_bus_outlined, Colors.blue),
+      '지하철' => (Icons.subway_outlined, Colors.green),
+      _        => (Icons.directions_transit_outlined, AppColors.primary),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -371,8 +355,7 @@ class _TransportPickerSheet extends StatefulWidget {
   final String? initialTransport;
   final String? initialRoute;
   final String? initialStation;
-  final void Function(String transport, String route, String? station)
-      onConfirm;
+  final void Function(String transport, String route, String? station) onConfirm;
 
   const _TransportPickerSheet({
     this.initialTransport,
@@ -382,68 +365,62 @@ class _TransportPickerSheet extends StatefulWidget {
   });
 
   @override
-  State<_TransportPickerSheet> createState() =>
-      _TransportPickerSheetState();
+  State<_TransportPickerSheet> createState() => _TransportPickerSheetState();
 }
 
 class _TransportPickerSheetState extends State<_TransportPickerSheet> {
-  int _step = 0; // 0=교통수단, 1=노선/호선/도로, 2=정류장/역
+  // step: 0=교통수단, 1=노선 입력(버스)/호선 선택(지하철), 2=역/정류장 입력
+  int _step = 0;
   String? _transport;
   String? _route;
-  final _searchCtrl = TextEditingController();
-  String _query = '';
 
-  // Mock 데이터
-  static const _busRoutes = [
-    '7770', '147', 'M5107', '9', '472', '3030', '1001', 'M6450',
-  ];
-  static const _busStops = <String, List<String>>{
-    '7770':  ['수원역 버스정류장', '교대역 정류장', '사당역 정류장', '방배역 정류장'],
-    '147':   ['강남역 버스정류장', '양재역 정류장', '매봉역 정류장'],
-    'M5107': ['수원역 환승센터', '판교역 정류장', '강남역 정류장'],
-    '9':     ['김포공항 정류장', '당산역 정류장', '여의도역 정류장', '노량진역 정류장'],
-    '472':   ['을지로2가 정류장', '시청역 정류장', '충정로역 정류장'],
-    '3030':  ['잠실역 정류장', '강변역 정류장', '구리시 정류장'],
-    '1001':  ['강남역 정류장', '서초역 정류장', '남부터미널 정류장'],
-    'M6450': ['수지구청역 정류장', '판교역 정류장', '강남역 정류장'],
-  };
+  // 버스: 직접 입력
+  final _busRouteCtrl = TextEditingController();
 
+  // 지하철: 호선 목록
   static const _subwayLines = [
+    // 서울 지하철
     '1호선', '2호선', '3호선', '4호선', '5호선',
-    '6호선', '7호선', '8호선', '9호선', '신분당선', '경의중앙선',
+    '6호선', '7호선', '8호선', '9호선','우이신설선', '신림선'
+    // 광역·특수 노선
+    '신분당선', '경의중앙선', '수인분당선', '경춘선', '공항철도',
+    'GTX-A',
+    // 인천·경기
+    '인천1호선', '인천2호선', '경강선', '서해선', '수도권경전철의정부',
+    '수도권경전철용인', '김포골드라인',
   ];
   static const _subwayColors = <String, Color>{
-    '1호선':    Color(0xFF0052A4),
-    '2호선':    Color(0xFF009246),
-    '3호선':    Color(0xFFEF7C1C),
-    '4호선':    Color(0xFF00A2D1),
-    '5호선':    Color(0xFF996CAC),
-    '6호선':    Color(0xFFCD7C2F),
-    '7호선':    Color(0xFF747F00),
-    '8호선':    Color(0xFFE6186C),
-    '9호선':    Color(0xFFBDB092),
-    '신분당선':  Color(0xFFD4003B),
-    '경의중앙선': Color(0xFF77C4A3),
-  };
-  static const _subwayStations = <String, List<String>>{
-    '1호선':    ['수원역', '서울역', '종각역', '동대문역', '청량리역', '의정부역'],
-    '2호선':    ['강남역', '역삼역', '선릉역', '삼성역', '당산역', '홍대입구역', '사당역', '잠실역'],
-    '3호선':    ['양재역', '매봉역', '도곡역', '대치역', '학여울역', '수서역'],
-    '4호선':    ['사당역', '이수역', '동작역', '총신대입구역', '서울역', '미아역'],
-    '5호선':    ['여의도역', '마포역', '공덕역', '서대문역', '광화문역'],
-    '6호선':    ['이태원역', '한강진역', '녹사평역', '삼각지역'],
-    '7호선':    ['건대입구역', '뚝섬유원지역', '청담역', '강남구청역'],
-    '8호선':    ['잠실역', '석촌역', '복정역', '모란역'],
-    '9호선':    ['당산역', '여의도역', '노량진역', '동작역', '고속터미널역', '신논현역'],
-    '신분당선':  ['강남역', '양재역', '판교역', '정자역', '광교역'],
-    '경의중앙선': ['서울역', '신촌역', '수색역', '능곡역', '행신역'],
+    // 서울 지하철
+    '1호선':           Color(0xFF0052A4),
+    '2호선':           Color(0xFF009246),
+    '3호선':           Color(0xFFEF7C1C),
+    '4호선':           Color(0xFF00A2D1),
+    '5호선':           Color(0xFF996CAC),
+    '6호선':           Color(0xFFCD7C2F),
+    '7호선':           Color(0xFF747F00),
+    '8호선':           Color(0xFFE6186C),
+    '9호선':           Color(0xFFBDB092),
+    '우이신설선':       Color(0xFFB0C700),
+    '신림선':          Color(0xFF6789CA),
+    // 광역·특수 노선
+    '신분당선':         Color(0xFFD4003B),
+    '경의중앙선':       Color(0xFF77C4A3),
+    '수인분당선':       Color(0xFFFFD600),
+    '경춘선':          Color(0xFF158D6B),
+    '공항철도':         Color(0xFF2768B2),
+    'GTX-A':          Color(0xFF8B5CF6),
+    // 인천·경기
+    '인천1호선':        Color(0xFF7CA8D5),
+    '인천2호선':        Color(0xFFF5A200),
+    '경강선':          Color(0xFF003DA5),
+    '서해선':          Color(0xFF8BC34A),
+    '수도권경전철의정부': Color(0xFFE4AA00),
+    '수도권경전철용인':  Color(0xFF7E5BB5),
+    '김포골드라인':     Color(0xFFB4983E),
   };
 
-  static const _roads = [
-    '경부고속도로', '서해안고속도로', '중부고속도로', '영동고속도로',
-    '강남대로', '올림픽대로', '내부순환로', '경부간선도로',
-    '한남대교', '반포대교', '동작대교', '성수대교',
-  ];
+  // 역/정류장: 직접 입력 (선택)
+  final _stationCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -451,80 +428,56 @@ class _TransportPickerSheetState extends State<_TransportPickerSheet> {
     _transport = widget.initialTransport;
     _route     = widget.initialRoute;
     if (_transport != null) _step = 1;
-    if (_route != null) _step = 2;
+    if (_route != null) {
+      _step = 2;
+      if (_transport == '버스') _busRouteCtrl.text = _route!;
+    }
+    if (widget.initialStation != null) {
+      _stationCtrl.text = widget.initialStation!;
+    }
   }
 
   @override
   void dispose() {
-    _searchCtrl.dispose();
+    _busRouteCtrl.dispose();
+    _stationCtrl.dispose();
     super.dispose();
   }
 
-  List<String> get _list {
-    if (_step == 1) {
-      final src = _transport == '버스'
-          ? _busRoutes.toList()
-          : _transport == '지하철'
-              ? _subwayLines.toList()
-              : _roads.toList();
-      if (_query.isEmpty) return src;
-      return src.where((s) => s.contains(_query)).toList();
-    }
-    if (_step == 2) {
-      final src = _transport == '버스'
-          ? (_busStops[_route] ?? <String>[])
-          : (_subwayStations[_route] ?? <String>[]);
-      if (_query.isEmpty) return src;
-      return src.where((s) => s.contains(_query)).toList();
-    }
-    return [];
-  }
-
   String get _title => switch (_step) {
-        0 => '교통수단 선택',
-        1 => _transport == '버스'
-            ? '노선 번호 선택'
-            : _transport == '지하철'
-                ? '호선 선택'
-                : '도로 / 구간 선택',
-        _ => _transport == '버스' ? '정류장 선택' : '역 선택',
-      };
+    0 => '교통수단 선택',
+    1 => _transport == '버스' ? '버스 노선 번호 입력' : '호선 선택',
+    _ => _transport == '버스' ? '정류장 입력 (선택)' : '역 입력 (선택)',
+  };
 
   void _pickTransport(String t) => setState(() {
-        _transport = t;
-        _route = null;
-        _query = '';
-        _searchCtrl.clear();
-        _step = 1;
-      });
+    _transport = t;
+    _route = null;
+    _busRouteCtrl.clear();
+    _stationCtrl.clear();
+    _step = 1;
+  });
 
-  void _pickRoute(String r) {
-    if (_transport == '도로현황') {
-      widget.onConfirm(_transport!, r, null);
-      Navigator.pop(context);
-      return;
-    }
+  void _pickSubwayLine(String line) => setState(() {
+    _route = line;
+    _stationCtrl.clear();
+    _step = 2;
+  });
+
+  void _confirmBusRoute() {
+    final text = _busRouteCtrl.text.trim();
+    if (text.isEmpty) return;
     setState(() {
-      _route = r;
-      _query = '';
-      _searchCtrl.clear();
+      _route = text;
+      _stationCtrl.clear();
       _step = 2;
     });
   }
 
-  void _pickStation(String s) {
-    widget.onConfirm(_transport!, _route!, s);
+  void _confirmFinal() {
+    final station = _stationCtrl.text.trim();
+    widget.onConfirm(_transport!, _route!, station.isEmpty ? null : station);
     Navigator.pop(context);
-  }
-
-  void _directInput() {
-    final text = _searchCtrl.text.trim();
-    if (text.isEmpty) return;
-    if (_step == 1) {
-      _pickRoute(text);
-    } else {
-      _pickStation(text);
-    }
   }
 
   @override
@@ -562,10 +515,16 @@ class _TransportPickerSheetState extends State<_TransportPickerSheet> {
                     constraints: const BoxConstraints(),
                     onPressed: () => setState(() {
                       _step--;
-                      _query = '';
-                      _searchCtrl.clear();
-                      if (_step == 0) _transport = null;
-                      if (_step < 2) _route = null;
+                      if (_step == 0) {
+                        _transport = null;
+                        _route = null;
+                        _busRouteCtrl.clear();
+                        _stationCtrl.clear();
+                      }
+                      if (_step == 1) {
+                        _route = null;
+                        _stationCtrl.clear();
+                      }
                     }),
                   ),
                 if (_step > 0) const SizedBox(width: 8),
@@ -605,7 +564,7 @@ class _TransportPickerSheetState extends State<_TransportPickerSheet> {
             ),
           const SizedBox(height: 12),
 
-          // Step 0: 교통수단 선택
+          // ── Step 0: 교통수단 선택 (버스 / 지하철만) ──
           if (_step == 0)
             Expanded(
               child: Padding(
@@ -616,7 +575,7 @@ class _TransportPickerSheetState extends State<_TransportPickerSheet> {
                       icon: Icons.directions_bus_outlined,
                       label: '버스',
                       color: Colors.blue,
-                      desc: '버스 노선 번호로 검색',
+                      desc: '노선 번호를 직접 입력',
                       onTap: () => _pickTransport('버스'),
                     ),
                     const SizedBox(height: 10),
@@ -624,97 +583,158 @@ class _TransportPickerSheetState extends State<_TransportPickerSheet> {
                       icon: Icons.subway_outlined,
                       label: '지하철',
                       color: Colors.green,
-                      desc: '호선 선택 후 역 검색',
+                      desc: '호선 선택 후 역 입력',
                       onTap: () => _pickTransport('지하철'),
-                    ),
-                    const SizedBox(height: 10),
-                    _TransportOption(
-                      icon: Icons.traffic_outlined,
-                      label: '도로현황',
-                      color: Colors.orange,
-                      desc: '도로/구간 선택',
-                      onTap: () => _pickTransport('도로현황'),
                     ),
                   ],
                 ),
               ),
             ),
 
-          // Step 1 & 2: 검색 + 목록
-          if (_step > 0) ...[
-            // 검색창
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _searchCtrl,
-                      decoration: InputDecoration(
-                        hintText: _step == 1
-                            ? (_transport == '지하철'
-                                ? '호선 검색'
-                                : '검색 또는 직접 입력')
-                            : '검색 또는 직접 입력',
-                        prefixIcon: const Icon(Icons.search, size: 20),
-                        contentPadding: const EdgeInsets.symmetric(
-                            vertical: 10),
+          // ── Step 1 (버스): 노선 번호 직접 입력 ──
+          if (_step == 1 && _transport == '버스')
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, bottomPad + 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: _busRouteCtrl,
+                      autofocus: true,
+                      keyboardType: TextInputType.text,
+                      textInputAction: TextInputAction.done,
+                      decoration: const InputDecoration(
+                        hintText: '예) 147, M5107, 9401',
+                        prefixIcon: Icon(Icons.edit_outlined, size: 20),
+                        contentPadding: EdgeInsets.symmetric(vertical: 12),
                         isDense: true,
                       ),
-                      onChanged: (v) => setState(() => _query = v),
+                      onSubmitted: (_) => _confirmBusRoute(),
                     ),
-                  ),
-                  // 지하철 호선 선택은 직접 입력 불필요
-                  if (!(_step == 1 && _transport == '지하철')) ...[
-                    const SizedBox(width: 8),
-                    OutlinedButton(
-                      onPressed: _directInput,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                        side:
-                            const BorderSide(color: AppColors.primary),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    const SizedBox(height: 8),
+                    Text(
+                      '버스 노선 번호를 입력해주세요.',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary),
+                    ),
+                    const Spacer(),
+                    FilledButton(
+                      onPressed: _confirmBusRoute,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
                       ),
-                      child: const Text('직접 입력',
-                          style: TextStyle(fontSize: 13)),
+                      child: const Text('다음',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w600)),
                     ),
                   ],
-                ],
+                ),
               ),
             ),
-            // 목록
+
+          // ── Step 1 (지하철): 호선 그리드 선택 ──
+          if (_step == 1 && _transport == '지하철')
             Expanded(
-              child: _step == 1 && _transport == '지하철'
-                  ? _SubwayLineGrid(
-                      lines: _subwayLines,
-                      colors: _subwayColors,
-                      onSelect: _pickRoute,
-                    )
-                  : ListView.separated(
-                      padding: EdgeInsets.fromLTRB(
-                          16, 0, 16, bottomPad + 16),
-                      itemCount: _list.length,
-                      separatorBuilder: (_, _) =>
-                          const Divider(height: 1),
-                      itemBuilder: (_, i) => ListTile(
-                        dense: true,
-                        contentPadding:
-                            const EdgeInsets.symmetric(horizontal: 4),
-                        title: Text(_list[i],
-                            style: const TextStyle(fontSize: 14)),
-                        trailing: const Icon(Icons.chevron_right,
-                            size: 18,
-                            color: AppColors.textSecondary),
-                        onTap: () => _step == 1
-                            ? _pickRoute(_list[i])
-                            : _pickStation(_list[i]),
-                      ),
-                    ),
+              child: _SubwayLineGrid(
+                lines: _subwayLines,
+                colors: _subwayColors,
+                onSelect: _pickSubwayLine,
+              ),
             ),
-          ],
+
+          // ── Step 2: 역/정류장 입력 (선택 사항) ──
+          if (_step == 2)
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, bottomPad + 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: _stationCtrl,
+                      autofocus: true,
+                      textInputAction: TextInputAction.done,
+                      decoration: InputDecoration(
+                        hintText: _transport == '버스'
+                            ? '예) 강남역 버스정류장'
+                            : '예) 강남역',
+                        prefixIcon:
+                        const Icon(Icons.place_outlined, size: 20),
+                        contentPadding:
+                        const EdgeInsets.symmetric(vertical: 12),
+                        isDense: true,
+                      ),
+                      onSubmitted: (_) => _confirmFinal(),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(Icons.info_outline,
+                            size: 13, color: AppColors.textSecondary),
+                        const SizedBox(width: 4),
+                        Text(
+                          '입력하지 않아도 됩니다 (선택)',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    Row(
+                      children: [
+                        // 건너뛰기
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () {
+                              _stationCtrl.clear();
+                              _confirmFinal();
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.textSecondary,
+                              side: const BorderSide(
+                                  color: AppColors.border),
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius:
+                                  BorderRadius.circular(10)),
+                            ),
+                            child: const Text('건너뛰기',
+                                style: TextStyle(fontSize: 15)),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        // 확인
+                        Expanded(
+                          flex: 2,
+                          child: FilledButton(
+                            onPressed: _confirmFinal,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius:
+                                  BorderRadius.circular(10)),
+                            ),
+                            child: const Text('확인',
+                                style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -738,48 +758,47 @@ class _TransportOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(12),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-              horizontal: 16, vertical: 18),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.07),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: color.withValues(alpha: 0.25)),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 22),
           ),
-          child: Row(
+          const SizedBox(width: 14),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 40, height: 40,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.15),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, color: color, size: 22),
-              ),
-              const SizedBox(width: 14),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label,
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: color)),
-                  const SizedBox(height: 2),
-                  Text(desc,
-                      style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary)),
-                ],
-              ),
-              const Spacer(),
-              Icon(Icons.chevron_right, color: color),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: color)),
+              const SizedBox(height: 2),
+              Text(desc,
+                  style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary)),
             ],
           ),
-        ),
-      );
+          const Spacer(),
+          Icon(Icons.chevron_right, color: color),
+        ],
+      ),
+    ),
+  );
 }
 
 class _SubwayLineGrid extends StatelessWidget {
@@ -798,9 +817,9 @@ class _SubwayLineGrid extends StatelessWidget {
     return GridView.count(
       crossAxisCount: 3,
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      mainAxisSpacing: 10,
-      crossAxisSpacing: 10,
-      childAspectRatio: 2.2,
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      childAspectRatio: 2.4,
       children: lines.map((line) {
         final color = colors[line] ?? AppColors.primary;
         return InkWell(
@@ -813,11 +832,17 @@ class _SubwayLineGrid extends StatelessWidget {
               border: Border.all(color: color.withValues(alpha: 0.4)),
             ),
             alignment: Alignment.center,
-            child: Text(line,
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: color)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(line,
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: color)),
+              ),
+            ),
           ),
         );
       }).toList(),
