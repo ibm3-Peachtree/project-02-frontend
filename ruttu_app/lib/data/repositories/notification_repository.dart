@@ -33,8 +33,8 @@ class ApiNotificationRepository implements NotificationRepository {
       alightingAlert:   data['alightingAlert']  as bool?   ?? false,
       alightingMode:    data['alightingMode']   as String? ?? '진동',
       alightingStops:   data['alightingStops']  as String? ?? '2정류장 전',
-      ttsEnabled:       data['ttsEnabled']      as bool?   ?? false,
-      ttsMode:          data['ttsMode']         as String? ?? '매 단계마다',
+      // ttsEnabled:       data['ttsEnabled']      as bool?   ?? false,
+      // ttsMode:          data['ttsMode']         as String? ?? '매 단계마다',
       briefingAlert:    data['briefingAlert']   as bool?   ?? false,
       morningTime:      data['morningTime']     as String? ?? '07:30',
     );
@@ -51,8 +51,8 @@ class ApiNotificationRepository implements NotificationRepository {
         'alightingAlert':   s.alightingAlert,
         'alightingMode':    s.alightingMode,
         'alightingStops':   s.alightingStops,
-        'ttsEnabled':       s.ttsEnabled,
-        'ttsMode':          s.ttsMode,
+        // 'ttsEnabled':       s.ttsEnabled,
+        // 'ttsMode':          s.ttsMode,
         'briefingAlert':    s.briefingAlert,
         'morningTime':      s.morningTime, // "HH:mm" — 백엔드 @JsonFormat(pattern="HH:mm")
       },

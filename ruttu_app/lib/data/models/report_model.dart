@@ -95,11 +95,15 @@ class ComfortTimeModel {
         .toList();
   }
 
-  /// HH:mm 문자열 기준 가장 이른 요일 반환
+  /// "HH:mm~HH:mm" 범위 형식에서 시작 시간 추출
+  static String _startOf(String range) => range.split('~').first.trim();
+
+  /// 시작 시간이 가장 이른 요일 반환 (범위 형식 "HH:mm~HH:mm" 대응)
   MapEntry<String, String>? get earliest {
     final e = toEntries();
     if (e.isEmpty) return null;
-    return e.reduce((a, b) => a.value.compareTo(b.value) <= 0 ? a : b);
+    return e.reduce((a, b) =>
+        _startOf(a.value).compareTo(_startOf(b.value)) <= 0 ? a : b);
   }
 }
 
@@ -186,6 +190,11 @@ class WeeklyReportModel {
   final int weeklyTransportCost;
   final int weeklyBurnedCalories;
   final int lateRiskCount;
+  final int totalLateCount;
+  final double changeRouteCount;
+  final double avgSatWaitTimeScore;
+  final double avgSatEtaScore;
+  final double avgSatRouteScore;
   final int avgWaitTimeMin;
   final DailyModel? daily;
 
@@ -199,6 +208,11 @@ class WeeklyReportModel {
     required this.weeklyTransportCost,
     required this.weeklyBurnedCalories,
     required this.lateRiskCount,
+    required this.totalLateCount,
+    required this.changeRouteCount,
+    required this.avgSatWaitTimeScore,
+    required this.avgSatEtaScore,
+    required this.avgSatRouteScore,
     required this.avgWaitTimeMin,
     this.daily,
   });
@@ -216,6 +230,11 @@ class WeeklyReportModel {
         weeklyTransportCost:   (json['weeklyTransportCost']   as num?)?.toInt() ?? 0,
         weeklyBurnedCalories:  (json['weeklyBurnedCalories']  as num?)?.toInt() ?? 0,
         lateRiskCount:         (json['lateRiskCount']         as num?)?.toInt() ?? 0,
+        totalLateCount:        (json['totalLateCount']        as num?)?.toInt() ?? 0,
+        changeRouteCount:      (json['changeRouteCount']      as num?)?.toDouble() ?? 0.0,
+        avgSatWaitTimeScore:   (json['avgSatWaitTimeScore']   as num?)?.toDouble() ?? 0.0,
+        avgSatEtaScore:        (json['avgSatEtaScore']        as num?)?.toDouble() ?? 0.0,
+        avgSatRouteScore:      (json['avgSatRouteScore']      as num?)?.toDouble() ?? 0.0,
         avgWaitTimeMin:        (json['avgWaitTimeMin']        as num?)?.toInt() ?? 0,
         daily: json['daily'] != null
             ? DailyModel.fromJson(json['daily'] as Map<String, dynamic>)
@@ -224,6 +243,10 @@ class WeeklyReportModel {
 
   /// "2026년 23주차" 형식의 레이블
   String get weekLabel => '$year년 $weekOfYear주차';
+
+  /// 만족도 3개 항목 평균
+  double get avgSatisfactionScore =>
+      (avgSatWaitTimeScore + avgSatEtaScore + avgSatRouteScore) / 3;
 }
 
 // ── 월간 리포트 ───────────────────────────────────────────────────────────────
@@ -238,7 +261,12 @@ class MonthlyReportModel {
   final CommuteTimeMinModel? minCommuteTimeMin;
   final int monthlyTransportCost;
   final int monthlyBurnedCalories;
-  final int lateRiskCount;
+  final int lateRiskCount;  
+  final int totalLateCount;
+  final double changeRouteCount;
+  final double avgSatWaitTimeScore;
+  final double avgSatEtaScore;
+  final double avgSatRouteScore;
   final ComfortTimeModel? recommendedComfortTime;
 
   const MonthlyReportModel({
@@ -253,6 +281,11 @@ class MonthlyReportModel {
     required this.monthlyTransportCost,
     required this.monthlyBurnedCalories,
     required this.lateRiskCount,
+    required this.totalLateCount,
+    required this.changeRouteCount,
+    required this.avgSatWaitTimeScore,
+    required this.avgSatEtaScore,
+    required this.avgSatRouteScore,
     this.recommendedComfortTime,
   });
 
@@ -284,10 +317,18 @@ class MonthlyReportModel {
       monthlyTransportCost:  (json['monthlyTransportCost']  as num?)?.toInt() ?? 0,
       monthlyBurnedCalories: (json['monthlyBurnedCalories'] as num?)?.toInt() ?? 0,
       lateRiskCount:         (json['lateRiskCount']         as num?)?.toInt() ?? 0,
+        totalLateCount:        (json['totalLateCount']        as num?)?.toInt() ?? 0,
+        changeRouteCount:      (json['changeRouteCount']      as num?)?.toDouble() ?? 0.0,
+        avgSatWaitTimeScore:   (json['avgSatWaitTimeScore']   as num?)?.toDouble() ?? 0.0,
+        avgSatEtaScore:        (json['avgSatEtaScore']        as num?)?.toDouble() ?? 0.0,
+        avgSatRouteScore:      (json['avgSatRouteScore']      as num?)?.toDouble() ?? 0.0,
       recommendedComfortTime: comfortTime,
     );
   }
 
   /// "2026년 5월" 형식의 레이블
   String get monthLabel => '$year년 ${month}월';
+    /// 만족도 3개 항목 평균
+  double get avgSatisfactionScore =>
+      (avgSatWaitTimeScore + avgSatEtaScore + avgSatRouteScore) / 3;
 }
