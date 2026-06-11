@@ -2143,6 +2143,7 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
   StreamSubscription<Position>? _gpsSub;
   Position? _currentGpsPosition;
   bool _routeDrawn = false; // ✅ 경로 폴리라인이 그려졌는지 추적
+  bool _autoStopTriggered = false; // ✅ 도착 자동 종료 중복 방지
 
   /// 활성 경로 좌표 중 현재 구간(idx) 이후 첫 번째 유효 좌표를 초기 카메라 위치로 반환.
   /// 없으면 null → 현재 위치로 이동.
@@ -2350,7 +2351,23 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
         await controller.addOverlay(sectionMarker);
       }
     }
-
+// ── 도착지 마커 추가 ─────────────────────────────────────
+final destPoint = effectiveCoords.lastWhere(
+  (c) => c.type == '도착' && c.hasCoord,
+  orElse: () => effectiveCoords.last,
+);
+if (destPoint.hasCoord) {
+  final destMarker = NMarker(
+    id: 'dest_marker',
+    position: NLatLng(destPoint.y!, destPoint.x!),
+  );
+  destMarker.setCaption(const NOverlayCaption(
+    text: '도착',
+    textSize: 12,
+    color: Color(0xFF4CAF50),
+  ));
+  await controller.addOverlay(destMarker);
+}
     // ── 4. GPS 현재 위치 마커 ────────────────────────────────
     NLatLng? gpsTarget;
     if (_currentGpsPosition != null) {
@@ -2373,6 +2390,26 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
     }
 
     _routeDrawn = true;
+  }
+
+  /// 도착 자동 종료: 다이얼로그 없이 바로 stopRoute() → 피드백 모달
+  /// HomeScreen._onStopTap()과 달리 확인 없이 즉시 처리한다.
+  Future<void> _handleAutoArrival(HomeState state) async {
+    if (!mounted) return;
+    final departure = state.departureTime ?? DateTime.now();
+    final arrival = DateTime.now();
+    final routine = state.activeRoutine;
+
+    // 진행 중인 경로(reco / my) 중단
+    if (ref.read(recoRouteProvider).isActive) {
+      await ref.read(recoRouteProvider.notifier).stopRecoRoute();
+    } else if (ref.read(myRouteProvider).isActive) {
+      await ref.read(myRouteProvider.notifier).stopMyRoute();
+    }
+    ref.read(homeProvider.notifier).stopRoute();
+
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (mounted) _showFeedbackModal(context, routine, departure, arrival);
   }
 
   @override
@@ -2409,6 +2446,46 @@ class _ActiveViewState extends ConsumerState<_ActiveView>
 
     // 현재 활성 탭(나의 경로 vs 추천 경로)에 맞는 좌표를 사용
     ref.listen<HomeState>(homeProvider, (prev, next) {
+      // ── 도착 자동 종료 감지 ──────────────────────────────────────
+      // routeXy의 마지막 항목은 type='도착'인 더미 포인트.
+      // myCurrentSectionData 또는 recoCurrentSectionData의 idx가
+      // routeXy.length - 1 에 도달하면 도착으로 판정해 자동 종료한다.
+if (!_autoStopTriggered && next.status == HomeStatus.active) {
+        final isReco = next.isUsingRecoRoute;
+        final sectionData = isReco
+            ? next.recoCurrentSectionData
+            : next.myCurrentSectionData;
+
+        if (sectionData != null) {
+          final lastIdx = sectionData.section.length - 1;
+          final currentIdx = sectionData.idx;
+          final prevIdx = isReco
+              ? prev?.recoCurrentSectionData?.idx
+              : prev?.myCurrentSectionData?.idx;
+
+if (!_autoStopTriggered && next.status == HomeStatus.active) {
+  final isReco = next.isUsingRecoRoute;
+  final sectionData = isReco
+      ? next.recoCurrentSectionData
+      : next.myCurrentSectionData;
+
+  if (sectionData != null) {
+    final lastIdx = sectionData.section.length - 1;
+    final currentIdx = sectionData.idx;
+    final prevIdx = isReco
+        ? prev?.recoCurrentSectionData?.idx
+        : prev?.myCurrentSectionData?.idx;
+
+    // ✅ prevIdx 조건 제거 — currentIdx가 lastIdx 이상이면 무조건 발동
+    if (currentIdx >= lastIdx) {
+      _autoStopTriggered = true;
+      _handleAutoArrival(next);
+    }
+  }
+}
+        }
+      }
+      // ── 지도 경로 폴리라인 재드로우 ────────────────────────────
       if (_mapController == null) return;
       final isReco = next.isUsingRecoRoute;
       final activeCoords = isReco
@@ -4932,24 +5009,27 @@ class _RoutineStepDots extends StatelessWidget {
         final line = (raw.contains('호선') || raw.contains('선')) ? raw : '${raw}호선';
         return '지하철:$line';
       }
+      if (t=='도착') return '도착';
       return '도보';
-    }).toList()..add('도착');
+    }).toList();
   }
 
   /// section.idx (도착 예정 구간) → 압축 후 현재 인덱스
-  int _sectionCurrentStep() {
-    final sec = sectionData;
-    if (sec == null) return currentStep;
-    final raw = sec.section;
-    final currentRawIdx = (sec.idx).clamp(0, raw.length - 1);
-    String? prev;
-    int ci = 0;
-    for (var i = 0; i <= currentRawIdx && i < raw.length; i++) {
-      final t = raw[i];
-      if (t != prev) { if (prev != null) ci++; prev = t; }
-    }
-    return ci;
+int _sectionCurrentStep() {
+  final sec = sectionData;
+  if (sec == null) return currentStep;
+  final raw = sec.section;
+  final currentRawIdx = (sec.idx).clamp(0, raw.length - 1); // 원래대로
+  String? prev;
+  int ci = 0;
+  for (var i = 0; i <= currentRawIdx && i < raw.length; i++) {
+    final t = raw[i];
+    if (t != prev) { if (prev != null) ci++; prev = t; }
   }
+  // idx가 마지막(도착)에 도달했을 때 마지막 ci++ 보정
+  if (currentRawIdx == raw.length - 1) ci++;
+  return ci;
+}
 
   @override
   Widget build(BuildContext context) {
@@ -4963,7 +5043,7 @@ class _RoutineStepDots extends StatelessWidget {
               // 버스: 번호가 있으면 첫 번째만 도트 진행바에 표시
               final nums = p.busNumbers;
               return nums.isNotEmpty ? '버스:${nums.first}' : '버스';
-            }).toList()..add('도착')));
+            }).toList()));
     final effectiveStep = sectionLabels.isNotEmpty ? _sectionCurrentStep() : currentStep;
 
     if (labels == null) {

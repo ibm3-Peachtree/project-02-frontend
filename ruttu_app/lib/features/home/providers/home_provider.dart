@@ -79,19 +79,13 @@ class HomeNotifier extends StateNotifier<HomeState> {
 
       final myRoute = _toMyRoute(routineDetail.route);
 
-      LiveRouteModel? recommendedRoute;
-      try {
-        recommendedRoute = await _repository.getRecommendedRouteDefault();
-      } catch (e) {
-        debugPrint('[initialize] getRecommendedRoute 실패, null 유지: $e');
-      }
-
+      // routineId를 알고 있으므로 /{routineId} 엔드포인트로 호출
       List<RouteModel> recoRouteList  = [];
       List<RouteModel> detourRouteList = [];
       bool hasIncident     = false;
       String? incidentMessage;
       try {
-        final recoResp  = await _repository.getRecoRouteListResponseDefault();
+        final recoResp  = await _repository.getRecoRouteListResponse(routineDetail.routineId);
         recoRouteList    = recoResp.recoList;
         detourRouteList  = recoResp.detourList;
         hasIncident      = recoResp.hasIncident;
@@ -106,7 +100,7 @@ class HomeNotifier extends StateNotifier<HomeState> {
         activeRoutine:    routineDetail,
         weather:          weather,
         myRoute:          myRoute,
-        recommendedRoute: recommendedRoute,
+        recommendedRoute: null, // recoRouteList에서 관리
         // 나의 경로 좌표는 routeXy로 초기 세팅
         myRouteCoords:    routineDetail.routeXy,
         recoRouteList:    recoRouteList,

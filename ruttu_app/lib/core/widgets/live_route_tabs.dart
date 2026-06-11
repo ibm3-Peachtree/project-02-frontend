@@ -188,20 +188,44 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
       );
     }
 
+    // 로딩 / 에러 / 시작 전 모두 새로고침 바를 상단에 항상 노출
+    final refreshBar = _MyRouteRefreshBar(
+      isLoading: state.isRouteLoading,
+      onRefresh: () {
+        final routineId =
+            ref.read(homeProvider).activeRoutine?.routineId ?? 0;
+        if (routineId != 0) {
+          ref.read(myRouteProvider.notifier).refreshMyRoute(routineId);
+        }
+      },
+    );
+
     // 로딩
     if (state.isRouteLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return Column(
+        children: [
+          refreshBar,
+          const Expanded(child: Center(child: CircularProgressIndicator())),
+        ],
+      );
     }
 
     // 에러
     if (state.error != null && state.route == null) {
-      return _ErrorView(
-        message: state.error!,
-        onRetry: () {
-          final routineId =
-              ref.read(homeProvider).activeRoutine?.routineId ?? 0;
-          ref.read(myRouteProvider.notifier).loadMyRoute(routineId);
-        },
+      return Column(
+        children: [
+          refreshBar,
+          Expanded(
+            child: _ErrorView(
+              message: state.error!,
+              onRetry: () {
+                final routineId =
+                    ref.read(homeProvider).activeRoutine?.routineId ?? 0;
+                ref.read(myRouteProvider.notifier).loadMyRoute(routineId);
+              },
+            ),
+          ),
+        ],
       );
     }
 
@@ -210,16 +234,7 @@ class _MyRouteTabState extends ConsumerState<_MyRouteTab> {
     final previewRoute = state.route ?? ref.watch(homeProvider.select((s) => s.myRoute));
     return Column(
       children: [
-        _MyRouteRefreshBar(
-          isLoading: state.isRouteLoading,
-          onRefresh: () {
-            final routineId =
-                ref.read(homeProvider).activeRoutine?.routineId ?? 0;
-            if (routineId != 0) {
-              ref.read(myRouteProvider.notifier).refreshMyRoute(routineId);
-            }
-          },
-        ),
+        refreshBar,
         Expanded(
           child: _StartPrompt(
             route: previewRoute,
