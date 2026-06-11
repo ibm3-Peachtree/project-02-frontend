@@ -61,6 +61,7 @@ abstract class BriefingRepository {
   /// 날씨·준비물·일정을 String으로 조합해 POST → AI 요약 텍스트 반환
   Future<String?> getTodayBriefing(String contents);
 }
+
 // ── 실제 API 구현체 ──────────────────────────────────────────────────────────
 
 class ApiBriefingRepository implements BriefingRepository {
@@ -136,20 +137,28 @@ class ApiBriefingRepository implements BriefingRepository {
     }
   }
 
+  // ── [수정] getTodayBriefing ──────────────────────────────────────────────
+  // 변경 전: DioException을 catch해서 null 반환 → 에러가 있어도 조용히 실패
+  // 변경 후: rethrow해서 provider의 catch 블록에서 로그 확인 가능하게
   @override
   Future<String?> getTodayBriefing(String contents) async {
-    try {
-      final res = await _dio.post(
-        ApiConstants.briefingSummary,
-        data: contents,
-        options: Options(headers: {'Content-Type': 'text/plain; charset=utf-8'}),
-      );
-      if (res.statusCode == 204 || res.data == null) return null;
-      return res.data.toString();
-    } on DioException catch (e) {
-      debugPrint('[BriefingRepo] getTodayBriefing error: $e');
-      return null;
-    }
+    debugPrint('[BriefingRepo] POST ${ApiConstants.briefingSummary}');
+    debugPrint('[BriefingRepo] briefing contents:\n$contents');
+
+    final res = await _dio.post(
+      ApiConstants.briefingSummary,
+      data: contents,
+      options: Options(headers: {'Content-Type': 'text/plain; charset=utf-8'}),
+    );
+
+    debugPrint('[BriefingRepo] briefing statusCode: ${res.statusCode}');
+    debugPrint('[BriefingRepo] briefing response: ${res.data}');
+
+    if (res.statusCode == 204 || res.data == null) return null;
+
+    final result = res.data.toString().trim();
+    return result.isEmpty ? null : result;
+    // DioException은 catch하지 않고 provider로 올라가게 둠
   }
 
   /// 스케줄 카드용: 모든 캘린더 그룹의 이벤트를 시간순으로 병합
@@ -171,6 +180,7 @@ class ApiBriefingRepository implements BriefingRepository {
         .toList();
   }
 }
+
 class MockBriefingRepository implements BriefingRepository {
   @override
   Future<WeatherAirQualityModel> getWeatherAirQuality() async {

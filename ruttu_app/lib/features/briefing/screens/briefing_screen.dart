@@ -52,18 +52,19 @@ class _BriefingScreenState extends ConsumerState<BriefingScreen> {
         ),
         toolbarHeight: 64,
       ),
-      body: state.isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                8,
-                16,
-                32 + MediaQuery.of(context).padding.bottom,
-              ),
-              children: [
-                // ① AI 요약 카드
-                _AiSummaryCard(summary: state.todayBriefing),
+body: state.isLoading
+    ? const Center(child: CircularProgressIndicator())
+    : RefreshIndicator(  // ✅ 추가
+        onRefresh: () => ref.read(briefingProvider.notifier).load(),
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            8,
+            16,
+            32 + MediaQuery.of(context).padding.bottom,
+          ),
+          children: [
+            _AiSummaryCard(summary: state.todayBriefing),
                 const SizedBox(height: 12),
 
                 // ③ 출발지/도착지 날씨 카드
@@ -112,6 +113,7 @@ class _BriefingScreenState extends ConsumerState<BriefingScreen> {
 
               ],
             ),
+    )
     );
   }
 }

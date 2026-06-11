@@ -1777,9 +1777,10 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
       }
 
       final briefing = ref.read(briefingProvider);
-      if (briefing.weather == null && !briefing.isLoading) {
-        ref.read(briefingProvider.notifier).load();
-      }
+if (!briefing.isLoading &&
+    (briefing.weather == null || briefing.todayBriefing == null)) {
+  ref.read(briefingProvider.notifier).load();
+}
     });
   }
 
@@ -2098,10 +2099,7 @@ class _PreActiveViewState extends ConsumerState<_PreActiveView>
                               isImminent: isImminent,
                               isOverdue: isOverdue,
                               minutesOverdue: minutesOverdue,
-                              aiSummary: ref
-                                  .watch(briefingProvider)
-                                  .aiSummary
-                                  ?.summary,
+                              aiSummary: ref.watch(briefingProvider).todayBriefing,
                               myRoute: home.myRoute,
                             ),
                           ),

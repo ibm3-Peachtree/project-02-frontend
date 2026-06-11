@@ -113,6 +113,7 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
       () async {
         try {
           originWeather = await _repository.getOriginWeather();
+          debugPrint('[OriginWeather] success: ${originWeather?.locationName}');
         } catch (e, st) {
           weatherError = '날씨 정보를 불러오지 못했어요.';
           debugPrint('[OriginWeather] ERROR: $e');
@@ -122,6 +123,7 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
       () async {
         try {
           destinationWeather = await _repository.getDestinationWeather();
+          debugPrint('[DestinationWeather] success: ${destinationWeather?.locationName}');
         } catch (e, st) {
           weatherError ??= '날씨 정보를 불러오지 못했어요.';
           debugPrint('[DestinationWeather] ERROR: $e');
@@ -143,6 +145,7 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
       () async {
         try {
           suppliesResult = await _repository.getSupplies();
+          debugPrint('[Supplies] success: clothes=${suppliesResult?.clothes}');
         } catch (e, st) {
           suppliesError = '준비물 정보를 불러오지 못했어요.';
           debugPrint('[Supplies] ERROR: $e');
@@ -151,7 +154,11 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
       }(),
     ]);
 
-    // 날씨·준비물·일정 데이터를 String으로 조합해 POST → AI 요약 수신
+    // ── [수정] AI 요약 ────────────────────────────────────────────────────────
+    // 변경 전: contents가 비어있으면 API 호출 자체를 건너뜀
+    //          → originWeather/supplies 중 하나라도 null이면 contents가 빌 수 있음
+    // 변경 후: 날씨·준비물·일정 중 하나라도 있으면 무조건 API 호출
+    //          contents가 비어있을 경우 로그로 원인 파악 가능
     String? todayBriefing;
     try {
       final contents = _buildSummaryContents(
@@ -160,11 +167,26 @@ class BriefingNotifier extends StateNotifier<BriefingState> {
         supplies:           suppliesResult,
         calendarGroups:     calendarGroups,
       );
+
+      // [수정] contents 내용을 로그로 출력해서 빈 값인지 즉시 확인
+      debugPrint('[TodayBriefing] contents length: ${contents.length}');
+      if (contents.isEmpty) {
+        debugPrint('[TodayBriefing] contents가 비어있음 → '
+            'originWeather=$originWeather, '
+            'destinationWeather=$destinationWeather, '
+            'supplies=$suppliesResult, '
+            'calendarGroups.length=${calendarGroups.length}');
+      }
+
       if (contents.isNotEmpty) {
         todayBriefing = await _repository.getTodayBriefing(contents);
         debugPrint('[TodayBriefing] result length: ${todayBriefing?.length}');
+        if (todayBriefing == null || todayBriefing.isEmpty) {
+          debugPrint('[TodayBriefing] 백엔드가 null 또는 빈 응답을 반환함');
+        }
       }
     } catch (e, st) {
+      // [수정] repository에서 rethrow된 에러가 여기서 잡힘 → 원인 확인 가능
       debugPrint('[TodayBriefing] ERROR: $e');
       debugPrint('[TodayBriefing] STACK: $st');
     }
