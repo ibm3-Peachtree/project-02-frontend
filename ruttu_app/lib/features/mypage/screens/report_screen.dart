@@ -915,7 +915,7 @@ class _MonthlyStatGrid extends StatelessWidget {
       child: _MiniStatCard(
         icon: '🗺️',
         title: '추천 경로 이용',
-        value: '${report.changeRouteCount}회',
+        value: '${report.changeRouteCount.toInt()}회',
         sub: '이번 달 이용 횟수',
         valueColor: AppColors.secondary,
       ),
